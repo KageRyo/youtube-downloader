@@ -13,13 +13,14 @@ function isAccessRestrictedError(message: string): boolean {
   const markers = [
     "login required",
     "sign in",
+    "sign in to confirm you’re not a bot",
+    "sign in to confirm you're not a bot",
+    "use --cookies-from-browser or --cookies",
     "private video",
     "members-only",
     "age-restricted",
     "this video is unavailable",
-    "not available in your country",
-    "cookies",
-    "authentication"
+    "not available in your country"
   ];
 
   return markers.some((marker) => normalized.includes(marker));
@@ -191,13 +192,13 @@ export async function prepareDownload(request: DownloadRequest): Promise<Downloa
     if (isAccessRestrictedError(stderr)) {
       if (request.cookiesFilePath) {
         throw new AppError(
-          "This video requires account access. Make sure cookies.txt is valid and belongs to an authorized account.",
+          "YouTube requested sign-in verification from this server. Make sure cookies.txt is valid, exported in Netscape format, and belongs to an authorized account.",
           403
         );
       }
 
       throw new AppError(
-        "This video requires account access. Try once without cookies, then upload cookies.txt if access fails.",
+        "YouTube requested sign-in verification from this server (this can happen even for public videos). Upload cookies.txt and try again.",
         403
       );
     }

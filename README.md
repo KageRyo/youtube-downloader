@@ -165,8 +165,22 @@ Install `yt-dlp` and ensure it is available in `PATH`.
 2. `ffmpeg is required for mp3 downloads`
 Install `ffmpeg` and retry.
 
-3. `This video requires account access`
-Retry with a valid `cookies.txt` from an authorized account.
+3. `YouTube requested sign-in verification from this server`
+This can happen even for public videos (anti-bot challenge). Retry with a valid `cookies.txt` from an authorized account.
+
+How to get `cookies.txt` (recommended):
+- Install browser extension `Get cookies.txt LOCALLY`.
+- Open `https://www.youtube.com` while logged in.
+- Use the extension to export `cookies.txt` in Netscape format.
+- Upload that file in the page and retry.
+
+Quick console snippet (debug only, often incomplete because HttpOnly cookies are not accessible):
+
+```js
+copy(document.cookie)
+```
+
+If this snippet returns only a few fields or fails to work, use the extension method above.
 
 4. Build succeeds but download fails at runtime
 Verify `yt-dlp --version` and `ffmpeg -version` on the server host.
