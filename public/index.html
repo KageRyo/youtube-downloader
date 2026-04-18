@@ -1,0 +1,73 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>YouTube Downloader</title>
+    <link rel="stylesheet" href="/style.css" />
+  </head>
+  <body>
+    <main class="shell">
+      <section class="panel">
+        <div class="topbar">
+          <h1 data-i18n="title">YouTube Downloader</h1>
+          <label class="lang-switch" for="languageSelect">
+            <select id="languageSelect" aria-label="Language selector">
+              <option value="en" selected>English</option>
+              <option value="zh-Hant">繁體中文</option>
+            </select>
+          </label>
+        </div>
+
+        <p class="helper" data-i18n="helper">One URL per line. Multiple URLs will be downloaded as a zip file.</p>
+
+        <form id="downloadForm" class="download-form">
+          <div class="field-block">
+            <label class="field-label" for="urls" data-i18n="urlsLabel">Video URLs (one per line)</label>
+            <textarea
+              id="urls"
+              name="urls"
+              rows="6"
+              required
+              data-i18n-placeholder="urlsPlaceholder"
+              placeholder="https://www.youtube.com/watch?v=...&#10;https://youtu.be/..."
+            ></textarea>
+          </div>
+
+          <div class="field-block card-lite">
+            <span class="field-label" data-i18n="outputFormatLabel">Output Format</span>
+            <div class="format-group">
+              <label class="format-option">
+                <input type="checkbox" name="format" value="mp3" checked />
+                <span>MP3</span>
+              </label>
+              <label class="format-option">
+                <input type="checkbox" name="format" value="mp4" />
+                <span>MP4</span>
+              </label>
+            </div>
+          </div>
+
+          <div class="field-block">
+            <label class="field-label" for="cookiesFile" data-i18n="cookiesLabel"
+              >cookies.txt (Optional. Usually not required unless access is restricted.)</label
+            >
+            <input id="cookiesFile" name="cookiesFile" type="file" accept=".txt" />
+          </div>
+
+          <button id="submitBtn" type="submit" data-i18n="downloadButton">Download</button>
+        </form>
+
+        <p class="status" id="status" aria-live="polite"></p>
+      </section>
+
+      <footer class="site-footer">
+        Made by
+        <a href="https://kageryo.coderyo.com" target="_blank" rel="noopener noreferrer">Chien-Hsun Chang</a>
+        With ♥, MIT License
+      </footer>
+    </main>
+
+    <script src="/app.js"></script>
+  </body>
+</html>
