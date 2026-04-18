@@ -139,6 +139,20 @@ async function cleanupAndDeleteJob(job: InternalJob): Promise<void> {
   jobs.delete(job.id);
 }
 
+function scheduleJobDeletion(job: InternalJob, reason: string): void {
+  const expiresAtMs = Date.now() + env.downloadFileTtlMs;
+  const expiresAt = new Date(expiresAtMs).toISOString();
+
+  updateJob(job, {
+    expiresAt
+  });
+
+  job.cleanupTimer = setTimeout(() => {
+    logJob(job.id, `${reason}; removing job record at ${expiresAt}`);
+    jobs.delete(job.id);
+  }, env.downloadFileTtlMs);
+}
+
 function scheduleJobExpiration(job: InternalJob): void {
   const expiresAtMs = Date.now() + env.downloadFileTtlMs;
   const expiresAt = new Date(expiresAtMs).toISOString();
@@ -310,7 +324,8 @@ async function processJob(jobId: string): Promise<void> {
     });
   } finally {
     if (job.status === "failed" || job.status === "cancelled") {
-      await cleanupAndDeleteJob(job);
+      await cleanupJobArtifacts(job);
+      scheduleJobDeletion(job, `job ended with status=${job.status}`);
     }
   }
 }
@@ -405,7 +420,8 @@ export async function cancelDownloadJob(jobId: string): Promise<void> {
   }
 
   if (job.status === "failed" || job.status === "cancelled") {
-    await cleanupAndDeleteJob(job);
+    // Keep terminal status temporarily so polling clients can read the final error.
+    // Job metadata will be removed by scheduled cleanup.
     return;
   }
 
