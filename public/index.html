@@ -53,6 +53,19 @@
               >cookies.txt (Optional. Usually not required unless access is restricted.)</label
             >
             <input id="cookiesFile" name="cookiesFile" type="file" accept=".txt" />
+            <div class="cookies-help" aria-live="polite">
+              <p class="cookies-help-title" data-i18n="cookiesHelpTitle">
+                Need cookies.txt? Quick steps:
+              </p>
+              <ol class="cookies-help-list">
+                <li data-i18n="cookiesHelpStep1">Log in to YouTube with the account that has access.</li>
+                <li data-i18n="cookiesHelpStep2">Export cookies as Netscape cookies.txt using a browser extension.</li>
+                <li data-i18n="cookiesHelpStep3">Upload the cookies.txt file here, then submit again.</li>
+              </ol>
+              <p class="cookies-help-note" data-i18n="cookiesHelpNote">
+                Use your own account only. Keep cookies.txt private and rotate it if expired.
+              </p>
+            </div>
           </div>
 
           <button id="submitBtn" type="submit" data-i18n="downloadButton">Download</button>
