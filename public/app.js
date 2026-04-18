@@ -1,6 +1,8 @@
 const form = document.getElementById("downloadForm");
 const statusEl = document.getElementById("status");
 const progressBar = document.getElementById("progressBar");
+const downloadActions = document.getElementById("downloadActions");
+const downloadLink = document.getElementById("downloadLink");
 const submitBtn = document.getElementById("submitBtn");
 const languageSelect = document.getElementById("languageSelect");
 const urlsInput = document.getElementById("urls");
@@ -19,6 +21,10 @@ const i18n = {
     statusStarting: "Starting download job...",
     statusPolling: "Processing on the server...",
     statusReady: "Download is ready.",
+    statusManualDownloadHint: "If the download did not start automatically, click the button below.",
+    statusCancelled: "Download was cancelled.",
+    statusExpired: "The download file has expired. Please submit again.",
+    downloadFileButton: "Download File",
     statusFailed: "Download failed. Please try again.",
     statusUnknownError: "Unknown error occurred"
   },
@@ -35,6 +41,10 @@ const i18n = {
     statusStarting: "正在建立下載任務...",
     statusPolling: "伺服器處理中...",
     statusReady: "下載已完成。",
+    statusManualDownloadHint: "若未自動開始下載，請點擊下方按鈕。",
+    statusCancelled: "下載已取消。",
+    statusExpired: "下載檔案已過期，請重新送出任務。",
+    downloadFileButton: "下載檔案",
     statusFailed: "下載失敗，請稍後再試。",
     statusUnknownError: "發生未知錯誤"
   }
@@ -42,6 +52,7 @@ const i18n = {
 
 const localeStorageKey = "preferredLocale";
 let currentLocale = "en";
+let activeJobId = null;
 
 function getLocaleText(key) {
   return i18n[currentLocale]?.[key] ?? i18n.en[key] ?? "";
@@ -60,6 +71,7 @@ function applyLocaleToPage() {
     element.setAttribute("placeholder", getLocaleText(key));
   });
 
+  downloadLink.textContent = getLocaleText("downloadFileButton");
   document.documentElement.lang = currentLocale;
 }
 
@@ -88,34 +100,24 @@ function setProgress(percent) {
   progressBar.setAttribute("aria-valuenow", `${clamped}`);
 }
 
-function getFileNameFromHeaders(headers, fallback) {
-  const disposition = headers.get("content-disposition") || "";
-  const match = disposition.match(/filename\*=UTF-8''([^;]+)|filename=\"?([^\";]+)\"?/i);
-
-  if (match?.[1]) {
-    return decodeURIComponent(match[1]);
-  }
-
-  if (match?.[2]) {
-    return match[2];
-  }
-
-  return fallback;
+function hideDownloadAction() {
+  downloadActions.classList.add("hidden");
+  downloadLink.setAttribute("href", "#");
+  downloadLink.removeAttribute("download");
+  downloadLink.textContent = getLocaleText("downloadFileButton");
 }
 
-async function downloadBlob(response, fallbackFileName) {
-  const blob = await response.blob();
-  const fileName = getFileNameFromHeaders(response.headers, fallbackFileName);
-  const objectUrl = URL.createObjectURL(blob);
+function showDownloadAction(downloadUrl, fileName, autoStart = true) {
+  downloadLink.setAttribute("href", downloadUrl);
+  downloadLink.setAttribute("download", fileName);
+  downloadLink.textContent = getLocaleText("downloadFileButton");
+  downloadActions.classList.remove("hidden");
 
-  const anchor = document.createElement("a");
-  anchor.href = objectUrl;
-  anchor.download = fileName;
-  document.body.append(anchor);
-  anchor.click();
-  anchor.remove();
-
-  URL.revokeObjectURL(objectUrl);
+  if (autoStart) {
+    window.setTimeout(() => {
+      downloadLink.click();
+    }, 0);
+  }
 }
 
 function normalizeUrls(input) {
@@ -132,14 +134,62 @@ async function sleep(ms) {
 async function fetchJobStatus(jobId) {
   const response = await fetch(`/api/download/${jobId}`);
   if (!response.ok) {
-    throw new Error(getLocaleText("statusFailed"));
+    let message = getLocaleText("statusFailed");
+    try {
+      const payload = await response.json();
+      if (payload?.message) {
+        message = payload.message;
+      }
+    } catch {
+      // keep fallback message
+    }
+
+    if (response.status === 404) {
+      message = getLocaleText("statusExpired");
+    }
+
+    throw new Error(message);
   }
 
   return response.json();
 }
 
+function cancelActiveJobIfNeeded() {
+  if (!activeJobId) {
+    return;
+  }
+
+  const cancelUrl = `/api/download/${activeJobId}/cancel`;
+  const payload = JSON.stringify({ reason: "page-unload" });
+
+  if (navigator.sendBeacon) {
+    const blob = new Blob([payload], { type: "application/json" });
+    navigator.sendBeacon(cancelUrl, blob);
+  } else {
+    void fetch(cancelUrl, {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json"
+      },
+      body: payload,
+      keepalive: true
+    }).catch(() => undefined);
+  }
+
+  activeJobId = null;
+}
+
+downloadLink.addEventListener("click", () => {
+  activeJobId = null;
+});
+
+window.addEventListener("pagehide", cancelActiveJobIfNeeded);
+window.addEventListener("beforeunload", cancelActiveJobIfNeeded);
+
 form.addEventListener("submit", async (event) => {
   event.preventDefault();
+  cancelActiveJobIfNeeded();
+  hideDownloadAction();
 
   const urlLines = normalizeUrls(urlsInput.value);
   if (urlLines.length === 0) {
@@ -194,6 +244,7 @@ form.addEventListener("submit", async (event) => {
 
     const job = await response.json();
     let currentJob = job;
+    activeJobId = currentJob.id;
     setStatus(`${getLocaleText("statusPolling")} ${currentJob.message}`, "progress");
     setProgress(currentJob.progress?.itemPercent ?? currentJob.progress?.percent ?? 0);
 
@@ -205,36 +256,31 @@ form.addEventListener("submit", async (event) => {
       const current = currentJob.progress?.current ?? 0;
       const total = currentJob.progress?.total ?? 0;
       const overallPercent = currentJob.progress?.percent ?? 0;
-      setStatus(`${currentJob.message} (${current}/${total}) | item ${itemPercent.toFixed(1)}% | total ${overallPercent.toFixed(1)}%`, "progress");
+      setStatus(
+        `${currentJob.message} (${current}/${total}) | item ${itemPercent.toFixed(1)}% | total ${overallPercent.toFixed(1)}%`,
+        "progress"
+      );
     }
 
     if (currentJob.status === "failed") {
       throw new Error(currentJob.error || currentJob.message || getLocaleText("statusFailed"));
     }
 
-    setStatus(getLocaleText("statusReady"), "ok");
-    setProgress(100);
-
-    const fileResponse = await fetch(`/api/download/${currentJob.id}/file`);
-    if (!fileResponse.ok) {
-      let message = getLocaleText("statusFailed");
-      try {
-        const payload = await fileResponse.json();
-        if (payload?.message) {
-          message = payload.message;
-        }
-      } catch {
-        // keep fallback message
-      }
-      throw new Error(message);
+    if (currentJob.status === "cancelled") {
+      throw new Error(currentJob.message || getLocaleText("statusCancelled"));
     }
 
-    await downloadBlob(fileResponse, currentJob.downloadName || "download.zip");
-    setStatus(currentJob.downloadName ? `${getLocaleText("statusReady")} ${currentJob.downloadName}` : getLocaleText("statusReady"), "ok");
+    const downloadUrl = `/api/download/${currentJob.id}/file`;
+    const fileName = currentJob.downloadName || "download.zip";
+
+    setStatus(`${getLocaleText("statusReady")} ${getLocaleText("statusManualDownloadHint")}`, "ok");
+    setProgress(100);
+    showDownloadAction(downloadUrl, fileName, true);
   } catch (error) {
     const message = error instanceof Error ? error.message : getLocaleText("statusUnknownError");
     setStatus(message, "err");
     setProgress(0);
+    activeJobId = null;
   } finally {
     submitBtn.disabled = false;
   }

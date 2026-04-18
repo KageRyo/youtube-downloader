@@ -163,6 +163,28 @@ input:focus {
   transition: width 180ms ease;
 }
 
+.download-actions {
+  margin-top: 12px;
+}
+
+.hidden {
+  display: none;
+}
+
+.download-link {
+  display: inline-block;
+  border-radius: 8px;
+  padding: 10px 14px;
+  background: #0f766e;
+  color: #ffffff;
+  text-decoration: none;
+  font-weight: 600;
+}
+
+.download-link:hover {
+  background: #0d5f58;
+}
+
 .status.ok {
   color: #166534;
 }
