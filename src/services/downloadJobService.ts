@@ -398,8 +398,9 @@ export async function cancelDownloadJob(jobId: string): Promise<void> {
   }
 
   if (job.status === "completed") {
-    logJob(job.id, "cancel requested after completion; cleaning up artifact");
-    await cleanupAndDeleteJob(job);
+    // Completed artifacts are already controlled by TTL; ignore late cancel requests
+    // so a page unload during download navigation cannot delete files prematurely.
+    logJob(job.id, "cancel requested after completion; ignored (artifact kept until TTL)");
     return;
   }
 

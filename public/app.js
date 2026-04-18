@@ -63,6 +63,11 @@ const i18n = {
 const localeStorageKey = "preferredLocale";
 let currentLocale = "en";
 let activeJobId = null;
+let activeJobStatus = null;
+
+function isCancellableStatus(status) {
+  return status === "queued" || status === "running";
+}
 
 function getLocaleText(key) {
   return i18n[currentLocale]?.[key] ?? i18n.en[key] ?? "";
@@ -165,7 +170,9 @@ async function fetchJobStatus(jobId) {
 }
 
 function cancelActiveJobIfNeeded() {
-  if (!activeJobId) {
+  if (!activeJobId || !isCancellableStatus(activeJobStatus)) {
+    activeJobId = null;
+    activeJobStatus = null;
     return;
   }
 
@@ -187,10 +194,12 @@ function cancelActiveJobIfNeeded() {
   }
 
   activeJobId = null;
+  activeJobStatus = null;
 }
 
 downloadLink.addEventListener("click", () => {
   activeJobId = null;
+  activeJobStatus = null;
 });
 
 window.addEventListener("pagehide", cancelActiveJobIfNeeded);
@@ -255,12 +264,14 @@ form.addEventListener("submit", async (event) => {
     const job = await response.json();
     let currentJob = job;
     activeJobId = currentJob.id;
+    activeJobStatus = currentJob.status;
     setStatus(`${getLocaleText("statusPolling")} ${currentJob.message}`, "progress");
     setProgress(currentJob.progress?.itemPercent ?? currentJob.progress?.percent ?? 0);
 
     while (currentJob.status === "queued" || currentJob.status === "running") {
       await sleep(1000);
       currentJob = await fetchJobStatus(currentJob.id);
+      activeJobStatus = currentJob.status;
       const itemPercent = currentJob.progress?.itemPercent ?? 0;
       setProgress(itemPercent);
       const current = currentJob.progress?.current ?? 0;
@@ -283,6 +294,9 @@ form.addEventListener("submit", async (event) => {
     const downloadUrl = `/api/download/${currentJob.id}/file`;
     const fileName = currentJob.downloadName || "download.zip";
 
+    activeJobId = null;
+    activeJobStatus = null;
+
     setStatus(`${getLocaleText("statusReady")} ${getLocaleText("statusManualDownloadHint")}`, "ok");
     setProgress(100);
     showDownloadAction(downloadUrl, fileName, true);
@@ -291,6 +305,7 @@ form.addEventListener("submit", async (event) => {
     setStatus(message, "err");
     setProgress(0);
     activeJobId = null;
+    activeJobStatus = null;
   } finally {
     submitBtn.disabled = false;
   }
