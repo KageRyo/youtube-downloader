@@ -266,17 +266,17 @@ form.addEventListener("submit", async (event) => {
     activeJobId = currentJob.id;
     activeJobStatus = currentJob.status;
     setStatus(`${getLocaleText("statusPolling")} ${currentJob.message}`, "progress");
-    setProgress(currentJob.progress?.itemPercent ?? currentJob.progress?.percent ?? 0);
+    setProgress(currentJob.progress?.percent ?? currentJob.progress?.itemPercent ?? 0);
 
     while (currentJob.status === "queued" || currentJob.status === "running") {
       await sleep(1000);
       currentJob = await fetchJobStatus(currentJob.id);
       activeJobStatus = currentJob.status;
       const itemPercent = currentJob.progress?.itemPercent ?? 0;
-      setProgress(itemPercent);
+      const overallPercent = currentJob.progress?.percent ?? itemPercent;
+      setProgress(overallPercent);
       const current = currentJob.progress?.current ?? 0;
       const total = currentJob.progress?.total ?? 0;
-      const overallPercent = currentJob.progress?.percent ?? 0;
       setStatus(
         `${currentJob.message} (${current}/${total}) | item ${itemPercent.toFixed(1)}% | total ${overallPercent.toFixed(1)}%`,
         "progress"

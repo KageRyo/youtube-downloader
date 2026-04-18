@@ -30,7 +30,7 @@ function resolveExecutable(command: string): string {
 }
 
 function writePrefixedLine(stream: NodeJS.WriteStream, prefix: string, chunk: string): void {
-  const lines = chunk.replace(/\r\n/g, "\n").split(/\r?\n/);
+  const lines = chunk.replace(/\r\n|\r/g, "\n").split("\n");
 
   for (const line of lines) {
     if (line.length === 0) {

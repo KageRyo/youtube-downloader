@@ -11,6 +11,19 @@ export function createApp() {
   app.use(express.urlencoded({ extended: true }));
   app.use(express.static(path.resolve(process.cwd(), "public")));
 
+  app.use("/api", (req: Request, res: Response, next: NextFunction) => {
+    const startedAt = Date.now();
+    const stamp = new Date().toISOString();
+    console.log(`[api ${stamp}] ${req.method} ${req.originalUrl} started`);
+
+    res.on("finish", () => {
+      const durationMs = Date.now() - startedAt;
+      console.log(`[api ${stamp}] ${req.method} ${req.originalUrl} -> ${res.statusCode} (${durationMs}ms)`);
+    });
+
+    next();
+  });
+
   app.use("/api", downloadRoutes);
 
   app.use((error: unknown, _req: Request, res: Response, _next: NextFunction) => {
