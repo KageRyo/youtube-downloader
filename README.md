@@ -63,6 +63,7 @@ Environment variables are loaded from `.env`.
 | `PORT` | No | `3000` | HTTP server port |
 | `DOWNLOADER_TMP_DIR` | No | OS temp directory | Temporary working directory for download jobs |
 | `DOWNLOAD_FILE_TTL_MINUTES` | No | `10` | Retention time for completed download artifacts before auto cleanup |
+| `YTDLP_COOKIES_FROM_BROWSER` | No | unset | Automatic fallback for YouTube sign-in challenge, e.g. `chrome` or `firefox:default` |
 
 Reference template: `.env.template`
 
@@ -132,6 +133,7 @@ Behavior:
 - The web client auto-sends job cancellation when the page is closed or navigated away.
 - If no authentication is required, cookies are not needed.
 - If access is restricted, provide a valid `cookies.txt` from an account that has legal access.
+- If configured, the server will automatically retry with `--cookies-from-browser` when YouTube asks for sign-in verification.
 
 ## Scripts
 

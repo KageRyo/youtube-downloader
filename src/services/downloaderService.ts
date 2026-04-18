@@ -95,7 +95,7 @@ export async function prepareDownload(request: DownloadRequest): Promise<Downloa
 
   const outputTemplate = path.join(tempDir, "%(title).160B.%(ext)s");
   const localBinDir = getLocalBinDir();
-  const args = [
+  const baseArgs = [
     "--no-playlist",
     "--newline",
     "--ffmpeg-location",
@@ -109,16 +109,16 @@ export async function prepareDownload(request: DownloadRequest): Promise<Downloa
   ];
 
   if (request.cookiesFilePath) {
-    args.push("--cookies", request.cookiesFilePath);
+    baseArgs.push("--cookies", request.cookiesFilePath);
   }
 
   if (request.format === "mp3") {
-    args.push("-x", "--audio-format", "mp3", "--audio-quality", "0");
+    baseArgs.push("-x", "--audio-format", "mp3", "--audio-quality", "0");
   } else {
-    args.push("-f", "bv*+ba/b");
+    baseArgs.push("-f", "bv*+ba/b");
   }
 
-  args.push(request.url);
+  baseArgs.push(request.url);
 
   logDownload(`running yt-dlp with ffmpeg=${localBinDir}`);
 
@@ -167,15 +167,31 @@ export async function prepareDownload(request: DownloadRequest): Promise<Downloa
     }
   };
 
-  let result;
-  try {
-    result = await runCommand("yt-dlp", args, {
+  const runYtDlp = async (args: string[]) =>
+    runCommand("yt-dlp", args, {
       emitOutput: true,
       logPrefix: "yt-dlp",
       onStdout: consumeProgressChunk,
       onStderr: consumeProgressChunk,
       signal: request.signal
     });
+
+  let result;
+  try {
+    result = await runYtDlp(baseArgs);
+
+    const shouldRetryWithBrowserCookies =
+      result.code !== 0 &&
+      !request.cookiesFilePath &&
+      !!env.ytDlpCookiesFromBrowser &&
+      isAccessRestrictedError(result.stderr.trim());
+
+    if (shouldRetryWithBrowserCookies) {
+      const browserSpec = env.ytDlpCookiesFromBrowser as string;
+      logDownload(`retrying with --cookies-from-browser ${browserSpec}`);
+      request.progress?.("running", "retrying with browser cookies", Math.max(lastReportedPercent, 15));
+      result = await runYtDlp(["--cookies-from-browser", browserSpec, ...baseArgs]);
+    }
   } finally {
     clearInterval(heartbeat);
   }
@@ -197,8 +213,15 @@ export async function prepareDownload(request: DownloadRequest): Promise<Downloa
         );
       }
 
+      if (env.ytDlpCookiesFromBrowser) {
+        throw new AppError(
+          "YouTube requested sign-in verification, and browser-cookie fallback also failed. Check YTDLP_COOKIES_FROM_BROWSER, browser login state, and profile permissions.",
+          403
+        );
+      }
+
       throw new AppError(
-        "YouTube requested sign-in verification from this server (this can happen even for public videos). Upload cookies.txt and try again.",
+        "YouTube requested sign-in verification from this server (this can happen even for public videos). Upload cookies.txt, or configure YTDLP_COOKIES_FROM_BROWSER.",
         403
       );
     }
