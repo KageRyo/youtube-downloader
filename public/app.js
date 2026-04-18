@@ -318,13 +318,13 @@ form.addEventListener("submit", async (event) => {
       await sleep(1000);
       currentJob = await fetchJobStatus(currentJob.id);
       activeJobStatus = currentJob.status;
+      const overallPercent = currentJob.progress?.percent ?? 0;
       const itemPercent = currentJob.progress?.itemPercent ?? 0;
-      const overallPercent = currentJob.progress?.percent ?? itemPercent;
       setProgress(overallPercent);
       const current = currentJob.progress?.current ?? 0;
       const total = currentJob.progress?.total ?? 0;
       setStatus(
-        `${currentJob.message} (${current}/${total}) | item ${itemPercent.toFixed(1)}% | total ${overallPercent.toFixed(1)}%`,
+        `${currentJob.message} (${current}/${total}) | 整體 ${overallPercent.toFixed(1)}% | 目前檔案 ${itemPercent.toFixed(1)}%`,
         "progress"
       );
     }

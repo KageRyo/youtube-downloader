@@ -134,9 +134,10 @@ export async function prepareDownload(request: DownloadRequest): Promise<Downloa
     }
 
     const detail = sawProgressLine ? "downloading media" : "resolving metadata and formats";
+    console.log(`[HEARTBEAT] ${lastReportedPercent.toFixed(1)}% - ${detail}`);
     logDownload(`heartbeat url=${request.url} format=${request.format} detail=${detail} progress=${lastReportedPercent.toFixed(1)}%`);
     request.progress("running", detail, lastReportedPercent);
-  }, 5000);
+  }, 1500);
 
   const reportProgressLine = (line: string): void => {
     const percent = extractProgressPercent(line);
@@ -151,6 +152,7 @@ export async function prepareDownload(request: DownloadRequest): Promise<Downloa
     }
 
     lastReportedPercent = normalizedPercent;
+    console.log(`[yt-dlp 進度] ${normalizedPercent}%`);
     request.progress("running", "downloading", normalizedPercent);
   };
 
