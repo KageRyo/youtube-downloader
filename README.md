@@ -120,9 +120,12 @@ Form fields:
 
 Behavior:
 
-- Single URL + single format: the server streams one file as response attachment.
-- Single URL + multiple formats: the server bundles outputs into one zip and streams it.
-- Multiple URLs: the server bundles outputs into one zip and streams it.
+- `POST /api/download` creates a background job and returns `202` with a job summary.
+- `GET /api/download/:jobId` returns the current job status and real progress.
+- `GET /api/download/:jobId/file` streams the finished file when the job is complete.
+- Single URL + single format: the job produces one file.
+- Single URL + multiple formats: the job bundles outputs into one zip.
+- Multiple URLs: the job bundles outputs into one zip.
 - If no authentication is required, cookies are not needed.
 - If access is restricted, provide a valid `cookies.txt` from an account that has legal access.
 
