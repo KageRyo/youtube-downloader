@@ -1,4 +1,6 @@
 import { spawn } from "node:child_process";
+import fs from "node:fs";
+import path from "node:path";
 
 interface CommandResult {
   code: number;
@@ -6,19 +8,69 @@ interface CommandResult {
   stderr: string;
 }
 
-export function runCommand(command: string, args: string[]): Promise<CommandResult> {
+interface RunCommandOptions {
+  logPrefix?: string;
+  emitOutput?: boolean;
+  onStdout?: (chunk: string) => void;
+  onStderr?: (chunk: string) => void;
+}
+
+function resolveExecutable(command: string): string {
+  if (command.includes(path.sep)) {
+    return command;
+  }
+
+  const localCandidate = path.resolve(process.cwd(), "tools", "bin", command);
+  if (fs.existsSync(localCandidate)) {
+    return localCandidate;
+  }
+
+  return command;
+}
+
+function writePrefixedLine(stream: NodeJS.WriteStream, prefix: string, chunk: string): void {
+  const lines = chunk.replace(/\r\n/g, "\n").split(/\r?\n/);
+
+  for (const line of lines) {
+    if (line.length === 0) {
+      continue;
+    }
+
+    stream.write(`${prefix}${line}\n`);
+  }
+}
+
+export function runCommand(
+  command: string,
+  args: string[],
+  options: RunCommandOptions = {}
+): Promise<CommandResult> {
   return new Promise((resolve, reject) => {
-    const child = spawn(command, args, { stdio: ["ignore", "pipe", "pipe"] });
+    const child = spawn(resolveExecutable(command), args, { stdio: ["ignore", "pipe", "pipe"] });
+    const shouldEmitOutput = options.emitOutput ?? false;
+    const prefix = options.logPrefix ? `[${options.logPrefix}] ` : `[${command}] `;
 
     let stdout = "";
     let stderr = "";
 
     child.stdout.on("data", (chunk: Buffer) => {
-      stdout += chunk.toString();
+      const text = chunk.toString();
+      stdout += text;
+      options.onStdout?.(text);
+
+      if (shouldEmitOutput) {
+        writePrefixedLine(process.stdout, prefix, text);
+      }
     });
 
     child.stderr.on("data", (chunk: Buffer) => {
-      stderr += chunk.toString();
+      const text = chunk.toString();
+      stderr += text;
+      options.onStderr?.(text);
+
+      if (shouldEmitOutput) {
+        writePrefixedLine(process.stderr, prefix, text);
+      }
     });
 
     child.on("error", (error) => {
@@ -37,7 +89,8 @@ export function runCommand(command: string, args: string[]): Promise<CommandResu
 
 export async function isCommandAvailable(command: string): Promise<boolean> {
   try {
-    const result = await runCommand(command, ["--version"]);
+    const versionArgs = command === "ffmpeg" || command === "ffprobe" ? ["-version"] : ["--version"];
+    const result = await runCommand(command, versionArgs);
     return result.code === 0;
   } catch {
     return false;

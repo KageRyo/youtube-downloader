@@ -45,7 +45,33 @@ function getDownloadFileName(filePath: string): string {
   return sanitizeFileName(path.basename(filePath));
 }
 
+function getLocalBinDir(): string {
+  return path.resolve(process.cwd(), "tools", "bin");
+}
+
+function logDownload(message: string): void {
+  const timestamp = new Date().toISOString();
+  console.log(`[download ${timestamp}] ${message}`);
+}
+
+function extractProgressPercent(chunk: string): number | null {
+  const matches = chunk.match(/(?:^|\s)(\d{1,3}(?:\.\d+)?)%/g);
+  if (!matches || matches.length === 0) {
+    return null;
+  }
+
+  const lastMatch = matches[matches.length - 1];
+  const percent = Number(lastMatch.replace(/[^\d.]/g, ""));
+
+  if (!Number.isFinite(percent)) {
+    return null;
+  }
+
+  return Math.max(0, Math.min(100, percent));
+}
+
 async function ensureDependencies(format: DownloadRequest["format"]): Promise<void> {
+  logDownload(`checking dependencies for format=${format}`);
   const hasYtDlp = await isCommandAvailable("yt-dlp");
   if (!hasYtDlp) {
     throw new AppError("yt-dlp is not available. Please install it first.", 500);
@@ -64,12 +90,17 @@ export async function prepareDownload(request: DownloadRequest): Promise<Downloa
 
   await fs.mkdir(env.tempRoot, { recursive: true });
   const tempDir = await fs.mkdtemp(path.join(env.tempRoot, "job-"));
+  logDownload(`starting job url=${request.url} format=${request.format} tempDir=${tempDir}`);
 
   const outputTemplate = path.join(tempDir, "%(title).160B.%(ext)s");
+  const localBinDir = getLocalBinDir();
   const args = [
     "--no-playlist",
-    "--no-progress",
     "--newline",
+    "--ffmpeg-location",
+    localBinDir,
+    "--js-runtimes",
+    `node:${process.execPath}`,
     "-o",
     outputTemplate,
     "--print",
@@ -88,8 +119,71 @@ export async function prepareDownload(request: DownloadRequest): Promise<Downloa
 
   args.push(request.url);
 
-  const result = await runCommand("yt-dlp", args);
+  logDownload(`running yt-dlp with ffmpeg=${localBinDir}`);
+
+  request.progress?.("running", "starting yt-dlp", 10);
+
+  let lastReportedPercent = 10;
+  let sawProgressLine = false;
+  let progressBuffer = "";
+
+  const heartbeat = setInterval(() => {
+    if (!request.progress) {
+      return;
+    }
+
+    const detail = sawProgressLine ? "downloading media" : "resolving metadata and formats";
+    logDownload(`heartbeat url=${request.url} format=${request.format} detail=${detail} progress=${lastReportedPercent.toFixed(1)}%`);
+    request.progress("running", detail, lastReportedPercent);
+  }, 5000);
+
+  const reportProgressLine = (line: string): void => {
+    const percent = extractProgressPercent(line);
+    if (percent === null || !request.progress) {
+      return;
+    }
+
+    sawProgressLine = true;
+    const normalizedPercent = Math.max(lastReportedPercent, Math.min(95, percent));
+    if (normalizedPercent <= lastReportedPercent) {
+      return;
+    }
+
+    lastReportedPercent = normalizedPercent;
+    request.progress("running", "downloading", normalizedPercent);
+  };
+
+  const consumeProgressChunk = (chunk: string): void => {
+    progressBuffer += chunk.replace(/\r/g, "\n");
+    const lines = progressBuffer.split("\n");
+    progressBuffer = lines.pop() ?? "";
+
+    for (const line of lines) {
+      if (line.trim().length === 0) {
+        continue;
+      }
+      reportProgressLine(line);
+    }
+  };
+
+  let result;
+  try {
+    result = await runCommand("yt-dlp", args, {
+      emitOutput: true,
+      logPrefix: "yt-dlp",
+      onStdout: consumeProgressChunk,
+      onStderr: consumeProgressChunk
+    });
+  } finally {
+    clearInterval(heartbeat);
+  }
+
+  if (progressBuffer.trim().length > 0) {
+    reportProgressLine(progressBuffer.trim());
+  }
+
   if (result.code !== 0) {
+    logDownload(`job failed url=${request.url} format=${request.format} exitCode=${result.code}`);
     await fs.rm(tempDir, { recursive: true, force: true });
     const stderr = result.stderr.trim();
 
@@ -110,6 +204,8 @@ export async function prepareDownload(request: DownloadRequest): Promise<Downloa
     throw new AppError(stderr || "Download failed. Please verify the URL and your access level.", 400);
   }
 
+  request.progress?.("processing", "finalizing output", Math.max(lastReportedPercent, 90));
+
   let filePath = pickProducedFilePath(result.stdout);
   if (!filePath) {
     const files = await fs.readdir(tempDir);
@@ -122,11 +218,14 @@ export async function prepareDownload(request: DownloadRequest): Promise<Downloa
   }
 
   const downloadName = getDownloadFileName(filePath);
+  request.progress?.("completed", downloadName, 100);
+  logDownload(`job completed url=${request.url} format=${request.format} file=${downloadName}`);
 
   return {
     filePath,
     downloadName,
     cleanup: async () => {
+      logDownload(`cleaning up tempDir=${tempDir}`);
       await fs.rm(tempDir, { recursive: true, force: true });
     }
   };
