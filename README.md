@@ -62,6 +62,7 @@ Environment variables are loaded from `.env`.
 | --- | --- | --- | --- |
 | `PORT` | No | `3000` | HTTP server port |
 | `DOWNLOADER_TMP_DIR` | No | OS temp directory | Temporary working directory for download jobs |
+| `DOWNLOAD_FILE_TTL_MINUTES` | No | `10` | Retention time for completed download artifacts before auto cleanup |
 
 Reference template: `.env.template`
 
@@ -123,9 +124,12 @@ Behavior:
 - `POST /api/download` creates a background job and returns `202` with a job summary.
 - `GET /api/download/:jobId` returns the current job status and real progress.
 - `GET /api/download/:jobId/file` streams the finished file when the job is complete.
+- `POST /api/download/:jobId/cancel` cancels an active job or cleans up a completed artifact immediately.
 - Single URL + single format: the job produces one file.
 - Single URL + multiple formats: the job bundles outputs into one zip.
 - Multiple URLs: the job bundles outputs into one zip.
+- Completed files expire automatically after the configured TTL and are removed from disk.
+- The web client auto-sends job cancellation when the page is closed or navigated away.
 - If no authentication is required, cookies are not needed.
 - If access is restricted, provide a valid `cookies.txt` from an account that has legal access.
 
@@ -136,6 +140,7 @@ npm run dev       # Start development server (tsx watch)
 npm run build     # Compile TypeScript to dist/
 npm run start     # Run compiled server
 npm run typecheck # Type-check only
+npm test          # Run tests in tests/
 ```
 
 ## Deployment Notes
