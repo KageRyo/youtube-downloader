@@ -4,7 +4,7 @@ import path from "node:path";
 import crypto from "node:crypto";
 import archiver from "archiver";
 
-import { DownloadFormat, DownloadJobSummary, DownloadResult } from "../types/download";
+import { DownloadFormat, DownloadJobItemSummary, DownloadJobSummary, DownloadResult } from "../types/download";
 import { AppError } from "../utils/errors";
 import { env } from "../config/env";
 import { prepareDownload } from "./downloaderService";
@@ -15,6 +15,12 @@ interface JobInput {
   cookiesFilePath?: string;
 }
 
+interface FailedItem {
+  url: string;
+  format: DownloadFormat;
+  message: string;
+}
+
 interface InternalJob extends DownloadJobSummary {
   cookiesFilePath?: string;
   filePath?: string;
@@ -22,6 +28,7 @@ interface InternalJob extends DownloadJobSummary {
   urls: string[];
   formats: DownloadFormat[];
   cleanupPaths: Array<() => Promise<void>>;
+  itemArtifacts: Map<string, { filePath: string; downloadName: string }>;
   abortController: AbortController;
   cleanupTimer?: NodeJS.Timeout;
   cleanedUp?: boolean;
@@ -156,10 +163,11 @@ function scheduleJobDeletion(job: InternalJob, reason: string): void {
 function scheduleJobExpiration(job: InternalJob): void {
   const expiresAtMs = Date.now() + env.downloadFileTtlMs;
   const expiresAt = new Date(expiresAtMs).toISOString();
+  const baseMessage = job.message && job.message.trim().length > 0 ? job.message : "Ready for download";
 
   updateJob(job, {
     expiresAt,
-    message: `Ready for download (expires at ${expiresAt})`
+    message: `${baseMessage} (expires at ${expiresAt})`
   });
 
   job.cleanupTimer = setTimeout(() => {
@@ -168,7 +176,11 @@ function scheduleJobExpiration(job: InternalJob): void {
   }, env.downloadFileTtlMs);
 }
 
-async function buildZipArchive(job: InternalJob, results: DownloadResult[]): Promise<{ filePath: string; downloadName: string }> {
+async function buildZipArchive(
+  job: InternalJob,
+  results: DownloadResult[],
+  failedItems: FailedItem[] = []
+): Promise<{ filePath: string; downloadName: string }> {
   const archiveName = `youtube-downloads-${Date.now()}-${job.id}.zip`;
   const archivePath = path.join(job.outputDir, `archive-${job.id}.zip`);
 
@@ -185,6 +197,15 @@ async function buildZipArchive(job: InternalJob, results: DownloadResult[]): Pro
     archive.pipe(output);
     for (const file of results) {
       archive.file(file.filePath, { name: file.downloadName });
+    }
+
+    if (failedItems.length > 0) {
+      const lines = [
+        "Some items failed during download/conversion.",
+        "",
+        ...failedItems.map((item, index) => `${index + 1}. [${item.format}] ${item.url}\n   ${item.message}`)
+      ];
+      archive.append(lines.join("\n"), { name: "failed-list.txt" });
     }
 
     void archive.finalize();
@@ -210,13 +231,20 @@ async function processJob(jobId: string): Promise<void> {
     });
 
     const results: DownloadResult[] = [];
+    const failedItems: FailedItem[] = [];
     const total = job.progress.total;
     let completed = 0;
+    let processed = 0;
 
     for (let urlIndex = 0; urlIndex < job.urls.length; urlIndex += 1) {
       for (const format of job.formats) {
-        const currentItem = completed + 1;
+        const currentItem = processed + 1;
         const requestLabel = `${urlIndex + 1}/${job.urls.length} ${format}`;
+        const item = job.items[currentItem - 1];
+        if (!item) {
+          throw new AppError("Download item state is out of sync.", 500);
+        }
+        item.status = "running";
 
         updateJob(job, {
           message: createProgressMessage(currentItem, total, "preparing", requestLabel),
@@ -229,44 +257,81 @@ async function processJob(jobId: string): Promise<void> {
           }
         });
 
-        const prepared = await prepareDownload({
-          url: job.urls[urlIndex],
-          format,
-          cookiesFilePath: job.cookiesFilePath,
-          signal: job.abortController.signal,
-          progress: (stage, detail, stagePercent) => {
-            updateJob(job, {
-              message: createProgressMessage(currentItem, total, stage, detail),
-              progress: {
-                current: currentItem,
-                percent: normalizePercent(currentItem, total, stagePercent),
-                itemPercent: Math.max(0, Math.min(100, stagePercent ?? 0)),
-                stage,
-                detail
-              }
-            });
-          }
-        });
+        try {
+          const prepared = await prepareDownload({
+            url: job.urls[urlIndex],
+            format,
+            cookiesFilePath: job.cookiesFilePath,
+            signal: job.abortController.signal,
+            progress: (stage, detail, stagePercent) => {
+              updateJob(job, {
+                message: createProgressMessage(currentItem, total, stage, detail),
+                progress: {
+                  current: currentItem,
+                  percent: normalizePercent(currentItem, total, stagePercent),
+                  itemPercent: Math.max(0, Math.min(100, stagePercent ?? 0)),
+                  stage,
+                  detail
+                }
+              });
+            }
+          });
 
-        results.push(prepared);
-        job.cleanupPaths.push(prepared.cleanup);
-        completed += 1;
+          results.push(prepared);
+          job.cleanupPaths.push(prepared.cleanup);
+          job.itemArtifacts.set(item.id, {
+            filePath: prepared.filePath,
+            downloadName: prepared.downloadName
+          });
+          item.status = "completed";
+          item.downloadName = prepared.downloadName;
+          item.error = undefined;
+          completed += 1;
+          processed += 1;
 
-        updateJob(job, {
-          message: createProgressMessage(completed, total, "completed", prepared.downloadName),
-          progress: {
-            current: completed,
-            percent: normalizePercent(completed, total, 100),
-            itemPercent: 100,
-            stage: "completed",
-            detail: prepared.downloadName
-          }
-        });
+          updateJob(job, {
+            message: createProgressMessage(processed, total, "completed", prepared.downloadName),
+            progress: {
+              current: processed,
+              percent: normalizePercent(processed, total, 100),
+              itemPercent: 100,
+              stage: "completed",
+              detail: prepared.downloadName
+            }
+          });
+        } catch (error) {
+          processed += 1;
+          const message = error instanceof Error ? error.message : "Unknown item error";
+          failedItems.push({
+            url: job.urls[urlIndex],
+            format,
+            message
+          });
+          item.status = "failed";
+          item.error = message;
+          item.downloadName = undefined;
+
+          updateJob(job, {
+            message: createProgressMessage(processed, total, "item-failed", message),
+            progress: {
+              current: processed,
+              percent: normalizePercent(processed, total, 100),
+              itemPercent: 100,
+              stage: "item-failed",
+              detail: message
+            }
+          });
+        }
       }
     }
 
+    if (results.length === 0) {
+      const firstError = failedItems[0]?.message ?? "No output file was produced.";
+      throw new AppError(`All ${failedItems.length} download items failed. First error: ${firstError}`, 400);
+    }
+
     let finalArtifact: { filePath: string; downloadName: string };
-    if (results.length === 1) {
+    if (results.length === 1 && failedItems.length === 0) {
       finalArtifact = {
         filePath: results[0].filePath,
         downloadName: results[0].downloadName
@@ -282,14 +347,14 @@ async function processJob(jobId: string): Promise<void> {
           detail: "building zip"
         }
       });
-      finalArtifact = await buildZipArchive(job, results);
+      finalArtifact = await buildZipArchive(job, results, failedItems);
     }
 
     job.filePath = finalArtifact.filePath;
     job.downloadName = finalArtifact.downloadName;
     updateJob(job, {
       status: "completed",
-      message: "Ready for download",
+      message: failedItems.length > 0 ? `Ready with partial success (${failedItems.length} failed, see failed-list.txt)` : "Ready for download",
       progress: {
         current: total,
         percent: 100,
@@ -332,6 +397,18 @@ async function processJob(jobId: string): Promise<void> {
 
 export function createDownloadJob(input: JobInput): DownloadJobSummary {
   const id = crypto.randomUUID();
+  const items: DownloadJobItemSummary[] = [];
+  for (const url of input.urls) {
+    for (const format of input.formats) {
+      items.push({
+        id: crypto.randomUUID(),
+        url,
+        format,
+        status: "pending"
+      });
+    }
+  }
+
   const total = Math.max(1, input.urls.length * input.formats.length);
   const createdAt = nowIso();
 
@@ -346,6 +423,9 @@ export function createDownloadJob(input: JobInput): DownloadJobSummary {
       stage: "queued"
     },
     message: "Queued",
+    items,
+    successfulItems: 0,
+    failedItems: 0,
     createdAt,
     updatedAt: createdAt,
     urls: input.urls,
@@ -353,6 +433,7 @@ export function createDownloadJob(input: JobInput): DownloadJobSummary {
     cookiesFilePath: input.cookiesFilePath,
     outputDir: path.join(env.tempRoot, `job-${id}`),
     cleanupPaths: [],
+    itemArtifacts: new Map<string, { filePath: string; downloadName: string }>(),
     abortController: new AbortController()
   };
 
@@ -365,11 +446,17 @@ export function createDownloadJob(input: JobInput): DownloadJobSummary {
 }
 
 export function summarizeJob(job: InternalJob): DownloadJobSummary {
+  const successfulItems = job.items.filter((item) => item.status === "completed").length;
+  const failedItems = job.items.filter((item) => item.status === "failed").length;
+
   return {
     id: job.id,
     status: job.status,
     progress: job.progress,
     message: job.message,
+    items: job.items.map((item) => ({ ...item })),
+    successfulItems,
+    failedItems,
     downloadName: job.downloadName,
     error: job.error,
     expiresAt: job.expiresAt,
@@ -387,7 +474,7 @@ export function getDownloadJob(jobId: string): DownloadJobSummary {
   return summarizeJob(job);
 }
 
-export async function getDownloadJobFile(jobId: string): Promise<{ filePath: string; downloadName: string; cleanup: () => Promise<void> }> {
+export async function getDownloadJobFile(jobId: string): Promise<{ filePath: string; downloadName: string }> {
   const job = jobs.get(jobId);
   if (!job) {
     throw new AppError("Download job not found.", 404);
@@ -399,11 +486,22 @@ export async function getDownloadJobFile(jobId: string): Promise<{ filePath: str
 
   return {
     filePath: job.filePath,
-    downloadName: job.downloadName,
-    cleanup: async () => {
-      await cleanupAndDeleteJob(job);
-    }
+    downloadName: job.downloadName
   };
+}
+
+export function getDownloadJobItemFile(jobId: string, itemId: string): { filePath: string; downloadName: string } {
+  const job = jobs.get(jobId);
+  if (!job) {
+    throw new AppError("Download job not found.", 404);
+  }
+
+  const file = job.itemArtifacts.get(itemId);
+  if (!file) {
+    throw new AppError("Download item file not found.", 404);
+  }
+
+  return file;
 }
 
 export async function cancelDownloadJob(jobId: string): Promise<void> {

@@ -3,6 +3,8 @@ const statusEl = document.getElementById("status");
 const progressBar = document.getElementById("progressBar");
 const downloadActions = document.getElementById("downloadActions");
 const downloadLink = document.getElementById("downloadLink");
+const itemDownloads = document.getElementById("itemDownloads");
+const itemDownloadList = document.getElementById("itemDownloadList");
 const submitBtn = document.getElementById("submitBtn");
 const languageSelect = document.getElementById("languageSelect");
 const urlsInput = document.getElementById("urls");
@@ -30,6 +32,8 @@ const i18n = {
     statusCancelled: "Download was cancelled.",
     statusExpired: "The download file has expired. Please submit again.",
     downloadFileButton: "Download File",
+    itemDownloadsTitle: "Per-item downloads",
+    itemDownloadLabel: "Item {index}: {format} {name}",
     statusFailed: "Download failed. Please try again.",
     statusUnknownError: "Unknown error occurred"
   },
@@ -55,6 +59,8 @@ const i18n = {
     statusCancelled: "下載已取消。",
     statusExpired: "下載檔案已過期，請重新送出任務。",
     downloadFileButton: "下載檔案",
+    itemDownloadsTitle: "逐項下載連結",
+    itemDownloadLabel: "第 {index} 項：{format} {name}",
     statusFailed: "下載失敗，請稍後再試。",
     statusUnknownError: "發生未知錯誤"
   }
@@ -64,6 +70,7 @@ const localeStorageKey = "preferredLocale";
 let currentLocale = "en";
 let activeJobId = null;
 let activeJobStatus = null;
+let latestCompletedItems = [];
 
 function isCancellableStatus(status) {
   return status === "queued" || status === "running";
@@ -87,6 +94,7 @@ function applyLocaleToPage() {
   });
 
   downloadLink.textContent = getLocaleText("downloadFileButton");
+  renderItemDownloads(latestCompletedItems);
   document.documentElement.lang = currentLocale;
 }
 
@@ -120,6 +128,43 @@ function hideDownloadAction() {
   downloadLink.setAttribute("href", "#");
   downloadLink.removeAttribute("download");
   downloadLink.textContent = getLocaleText("downloadFileButton");
+}
+
+function hideItemDownloads() {
+  latestCompletedItems = [];
+  itemDownloadList.innerHTML = "";
+  itemDownloads.classList.add("hidden");
+}
+
+function formatItemLabel(item, index) {
+  const template = getLocaleText("itemDownloadLabel");
+  const fallbackName = item.downloadName || item.id;
+  return template
+    .replace("{index}", `${index + 1}`)
+    .replace("{format}", `[${(item.format || "").toUpperCase()}]`)
+    .replace("{name}", fallbackName);
+}
+
+function renderItemDownloads(items) {
+  latestCompletedItems = Array.isArray(items) ? items : [];
+  itemDownloadList.innerHTML = "";
+
+  if (latestCompletedItems.length === 0) {
+    itemDownloads.classList.add("hidden");
+    return;
+  }
+
+  latestCompletedItems.forEach((item, index) => {
+    const li = document.createElement("li");
+    const anchor = document.createElement("a");
+    anchor.href = `/api/download/${activeJobId || item.jobId || ""}/items/${item.id}/file`;
+    anchor.setAttribute("download", item.downloadName || `item-${index + 1}`);
+    anchor.textContent = formatItemLabel(item, index);
+    li.appendChild(anchor);
+    itemDownloadList.appendChild(li);
+  });
+
+  itemDownloads.classList.remove("hidden");
 }
 
 function showDownloadAction(downloadUrl, fileName, autoStart = true) {
@@ -209,6 +254,7 @@ form.addEventListener("submit", async (event) => {
   event.preventDefault();
   cancelActiveJobIfNeeded();
   hideDownloadAction();
+  hideItemDownloads();
 
   const urlLines = normalizeUrls(urlsInput.value);
   if (urlLines.length === 0) {
@@ -293,6 +339,9 @@ form.addEventListener("submit", async (event) => {
 
     const downloadUrl = `/api/download/${currentJob.id}/file`;
     const fileName = currentJob.downloadName || "download.zip";
+    const completedItems = (currentJob.items || []).filter((item) => item.status === "completed");
+
+    renderItemDownloads(completedItems.map((item) => ({ ...item, jobId: currentJob.id })));
 
     activeJobId = null;
     activeJobStatus = null;

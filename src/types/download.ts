@@ -29,11 +29,25 @@ export interface DownloadResult {
   cleanup: () => Promise<void>;
 }
 
+export type DownloadItemStatus = "pending" | "running" | "completed" | "failed";
+
+export interface DownloadJobItemSummary {
+  id: string;
+  url: string;
+  format: DownloadFormat;
+  status: DownloadItemStatus;
+  downloadName?: string;
+  error?: string;
+}
+
 export interface DownloadJobSummary {
   id: string;
   status: DownloadJobStatus;
   progress: DownloadJobProgress;
   message: string;
+  items: DownloadJobItemSummary[];
+  successfulItems: number;
+  failedItems: number;
   downloadName?: string;
   error?: string;
   expiresAt?: string;

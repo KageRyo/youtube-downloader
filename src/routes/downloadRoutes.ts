@@ -1,7 +1,7 @@
 import { Router } from "express";
 import multer from "multer";
 
-import { cancelJobHandler, createJobHandler, getJobFileHandler, getJobStatusHandler, healthHandler } from "../controllers/downloadController";
+import { cancelJobHandler, createJobHandler, getJobFileHandler, getJobItemFileHandler, getJobStatusHandler, healthHandler } from "../controllers/downloadController";
 
 const upload = multer({
   storage: multer.memoryStorage(),
@@ -16,4 +16,5 @@ downloadRoutes.get("/health", healthHandler);
 downloadRoutes.post("/download", upload.single("cookiesFile"), createJobHandler);
 downloadRoutes.get("/download/:jobId", getJobStatusHandler);
 downloadRoutes.get("/download/:jobId/file", getJobFileHandler);
+downloadRoutes.get("/download/:jobId/items/:itemId/file", getJobItemFileHandler);
 downloadRoutes.post("/download/:jobId/cancel", cancelJobHandler);

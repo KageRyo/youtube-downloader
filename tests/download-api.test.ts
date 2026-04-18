@@ -10,6 +10,7 @@ const mocks = vi.hoisted(() => {
     createDownloadJob: vi.fn(),
     getDownloadJob: vi.fn(),
     getDownloadJobFile: vi.fn(),
+    getDownloadJobItemFile: vi.fn(),
     cancelDownloadJob: vi.fn()
   };
 });
@@ -18,6 +19,7 @@ vi.mock("../src/services/downloadJobService", () => ({
   createDownloadJob: mocks.createDownloadJob,
   getDownloadJob: mocks.getDownloadJob,
   getDownloadJobFile: mocks.getDownloadJobFile,
+  getDownloadJobItemFile: mocks.getDownloadJobItemFile,
   cancelDownloadJob: mocks.cancelDownloadJob
 }));
 
@@ -36,6 +38,9 @@ const queuedJob = {
     itemPercent: 0,
     stage: "queued"
   },
+  items: [],
+  successfulItems: 0,
+  failedItems: 0,
   createdAt: new Date().toISOString(),
   updatedAt: new Date().toISOString()
 };
@@ -45,6 +50,7 @@ describe("download api", () => {
     mocks.createDownloadJob.mockReset();
     mocks.getDownloadJob.mockReset();
     mocks.getDownloadJobFile.mockReset();
+    mocks.getDownloadJobItemFile.mockReset();
     mocks.cancelDownloadJob.mockReset();
   });
 
@@ -104,26 +110,20 @@ describe("download api", () => {
     expect(mocks.getDownloadJob).toHaveBeenCalledWith("job-status");
   });
 
-  it("streams completed file and triggers cleanup", async () => {
+  it("streams completed file", async () => {
     const tmpDir = await fs.mkdtemp(path.join(os.tmpdir(), "ytdl-test-"));
     const filePath = path.join(tmpDir, "sample.mp3");
     await fs.writeFile(filePath, "binary-data");
 
-    const cleanup = vi.fn(async () => {
-      await fs.rm(tmpDir, { recursive: true, force: true });
-    });
-
     mocks.getDownloadJobFile.mockResolvedValue({
       filePath,
-      downloadName: "sample.mp3",
-      cleanup
+      downloadName: "sample.mp3"
     });
 
     const response = await request(app).get("/api/download/job-file/file").expect(200);
 
     expect(response.headers["content-disposition"]).toContain("sample.mp3");
-    await new Promise((resolve) => setTimeout(resolve, 0));
-    expect(cleanup).toHaveBeenCalledTimes(1);
+    await fs.rm(tmpDir, { recursive: true, force: true });
   });
 
   it("cancels active job", async () => {
@@ -132,5 +132,21 @@ describe("download api", () => {
     await request(app).post("/api/download/job-cancel/cancel").expect(202, { ok: true });
 
     expect(mocks.cancelDownloadJob).toHaveBeenCalledWith("job-cancel");
+  });
+
+  it("streams completed item file", async () => {
+    const tmpDir = await fs.mkdtemp(path.join(os.tmpdir(), "ytdl-item-test-"));
+    const filePath = path.join(tmpDir, "item.mp3");
+    await fs.writeFile(filePath, "binary-data");
+
+    mocks.getDownloadJobItemFile.mockReturnValue({
+      filePath,
+      downloadName: "item.mp3"
+    });
+
+    const response = await request(app).get("/api/download/job-file/items/item-1/file").expect(200);
+    expect(response.headers["content-disposition"]).toContain("item.mp3");
+
+    await fs.rm(tmpDir, { recursive: true, force: true });
   });
 });

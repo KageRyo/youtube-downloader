@@ -216,6 +216,38 @@ input:focus {
   background: #0d5f58;
 }
 
+.item-downloads {
+  margin-top: 12px;
+  border: 1px solid #e5e7eb;
+  border-radius: 8px;
+  background: #f8fafc;
+  padding: 10px 12px;
+}
+
+.item-downloads-title {
+  margin: 0 0 8px;
+  font-weight: 600;
+  color: #1f2937;
+}
+
+.item-downloads-list {
+  margin: 0;
+  padding-left: 18px;
+}
+
+.item-downloads-list li + li {
+  margin-top: 6px;
+}
+
+.item-downloads-list a {
+  color: #0f4ea8;
+  text-decoration: none;
+}
+
+.item-downloads-list a:hover {
+  text-decoration: underline;
+}
+
 .status.ok {
   color: #166534;
 }

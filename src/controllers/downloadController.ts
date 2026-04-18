@@ -3,7 +3,7 @@ import path from "node:path";
 
 import { NextFunction, Request, Response } from "express";
 
-import { cancelDownloadJob, createDownloadJob, getDownloadJob, getDownloadJobFile } from "../services/downloadJobService";
+import { cancelDownloadJob, createDownloadJob, getDownloadJob, getDownloadJobFile, getDownloadJobItemFile } from "../services/downloadJobService";
 import { DownloadFormat } from "../types/download";
 import { env } from "../config/env";
 import { AppError } from "../utils/errors";
@@ -135,9 +135,20 @@ export function getJobStatusHandler(req: Request, res: Response, next: NextFunct
 export async function getJobFileHandler(req: Request, res: Response, next: NextFunction): Promise<void> {
   try {
     const jobFile = await getDownloadJobFile(getJobIdParam(req.params.jobId));
-    res.download(jobFile.filePath, jobFile.downloadName, async (error) => {
-      await jobFile.cleanup();
+    res.download(jobFile.filePath, jobFile.downloadName, (error) => {
+      if (error && !res.headersSent) {
+        next(new AppError("File transfer failed. Please try again.", 500));
+      }
+    });
+  } catch (error) {
+    next(error);
+  }
+}
 
+export function getJobItemFileHandler(req: Request, res: Response, next: NextFunction): void {
+  try {
+    const jobFile = getDownloadJobItemFile(getJobIdParam(req.params.jobId), getJobIdParam(req.params.itemId));
+    res.download(jobFile.filePath, jobFile.downloadName, (error) => {
       if (error && !res.headersSent) {
         next(new AppError("File transfer failed. Please try again.", 500));
       }

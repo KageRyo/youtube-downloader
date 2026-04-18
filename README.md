@@ -125,6 +125,7 @@ Behavior:
 - `POST /api/download` creates a background job and returns `202` with a job summary.
 - `GET /api/download/:jobId` returns the current job status and real progress.
 - `GET /api/download/:jobId/file` streams the finished file when the job is complete.
+- `GET /api/download/:jobId/items/:itemId/file` streams one successful item from the job.
 - `POST /api/download/:jobId/cancel` cancels an active job or cleans up a completed artifact immediately.
 - Single URL + single format: the job produces one file.
 - Single URL + multiple formats: the job bundles outputs into one zip.
