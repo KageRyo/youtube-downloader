@@ -172,7 +172,8 @@ export async function prepareDownload(request: DownloadRequest): Promise<Downloa
       emitOutput: true,
       logPrefix: "yt-dlp",
       onStdout: consumeProgressChunk,
-      onStderr: consumeProgressChunk
+      onStderr: consumeProgressChunk,
+      signal: request.signal
     });
   } finally {
     clearInterval(heartbeat);

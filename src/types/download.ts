@@ -1,6 +1,6 @@
 export type DownloadFormat = "mp3" | "mp4";
 
-export type DownloadJobStatus = "queued" | "running" | "completed" | "failed";
+export type DownloadJobStatus = "queued" | "running" | "completed" | "failed" | "cancelled";
 
 export interface DownloadProgressReporter {
   (stage: string, detail?: string, percent?: number): void;
@@ -20,6 +20,7 @@ export interface DownloadRequest {
   format: DownloadFormat;
   cookiesFilePath?: string;
   progress?: DownloadProgressReporter;
+  signal?: AbortSignal;
 }
 
 export interface DownloadResult {
@@ -35,6 +36,7 @@ export interface DownloadJobSummary {
   message: string;
   downloadName?: string;
   error?: string;
+  expiresAt?: string;
   createdAt: string;
   updatedAt: string;
 }

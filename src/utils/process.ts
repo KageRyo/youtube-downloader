@@ -13,6 +13,7 @@ interface RunCommandOptions {
   emitOutput?: boolean;
   onStdout?: (chunk: string) => void;
   onStderr?: (chunk: string) => void;
+  signal?: AbortSignal;
 }
 
 function resolveExecutable(command: string): string {
@@ -46,9 +47,48 @@ export function runCommand(
   options: RunCommandOptions = {}
 ): Promise<CommandResult> {
   return new Promise((resolve, reject) => {
+    if (options.signal?.aborted) {
+      const error = new Error("Command execution aborted before start.");
+      error.name = "AbortError";
+      reject(error);
+      return;
+    }
+
     const child = spawn(resolveExecutable(command), args, { stdio: ["ignore", "pipe", "pipe"] });
     const shouldEmitOutput = options.emitOutput ?? false;
     const prefix = options.logPrefix ? `[${options.logPrefix}] ` : `[${command}] `;
+    let settled = false;
+
+    const finishResolve = (value: CommandResult) => {
+      if (settled) {
+        return;
+      }
+      settled = true;
+      resolve(value);
+    };
+
+    const finishReject = (error: Error) => {
+      if (settled) {
+        return;
+      }
+      settled = true;
+      reject(error);
+    };
+
+    const handleAbort = () => {
+      child.kill("SIGTERM");
+      setTimeout(() => {
+        if (child.exitCode === null) {
+          child.kill("SIGKILL");
+        }
+      }, 1500);
+
+      const error = new Error("Command execution aborted.");
+      error.name = "AbortError";
+      finishReject(error);
+    };
+
+    options.signal?.addEventListener("abort", handleAbort, { once: true });
 
     let stdout = "";
     let stderr = "";
@@ -74,11 +114,13 @@ export function runCommand(
     });
 
     child.on("error", (error) => {
-      reject(error);
+      options.signal?.removeEventListener("abort", handleAbort);
+      finishReject(error);
     });
 
     child.on("close", (code) => {
-      resolve({
+      options.signal?.removeEventListener("abort", handleAbort);
+      finishResolve({
         code: code ?? 1,
         stdout,
         stderr

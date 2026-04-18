@@ -22,6 +22,9 @@ interface InternalJob extends DownloadJobSummary {
   urls: string[];
   formats: DownloadFormat[];
   cleanupPaths: Array<() => Promise<void>>;
+  abortController: AbortController;
+  cleanupTimer?: NodeJS.Timeout;
+  cleanedUp?: boolean;
 }
 
 const jobs = new Map<string, InternalJob>();
@@ -50,7 +53,12 @@ function normalizePercent(current: number, total: number, stageProgress = 0): nu
   return Math.max(0, Math.min(100, Math.round(overall * 1000) / 10));
 }
 
-function updateJob(job: InternalJob, patch: Partial<Pick<InternalJob, "status" | "message" | "error" | "downloadName" | "filePath">> & { progress?: Partial<InternalJob["progress"]> }): void {
+function updateJob(
+  job: InternalJob,
+  patch: Partial<Pick<InternalJob, "status" | "message" | "error" | "downloadName" | "filePath" | "expiresAt">> & {
+    progress?: Partial<InternalJob["progress"]>;
+  }
+): void {
   const previousStatus = job.status;
   const previousStage = job.progress.stage;
   const previousItemPercent = job.progress.itemPercent;
@@ -73,6 +81,10 @@ function updateJob(job: InternalJob, patch: Partial<Pick<InternalJob, "status" |
 
   if (patch.filePath !== undefined) {
     job.filePath = patch.filePath;
+  }
+
+  if (patch.expiresAt !== undefined) {
+    job.expiresAt = patch.expiresAt;
   }
 
   if (patch.progress) {
@@ -100,6 +112,16 @@ function updateJob(job: InternalJob, patch: Partial<Pick<InternalJob, "status" |
 }
 
 async function cleanupJobArtifacts(job: InternalJob): Promise<void> {
+  if (job.cleanedUp) {
+    return;
+  }
+  job.cleanedUp = true;
+
+  if (job.cleanupTimer) {
+    clearTimeout(job.cleanupTimer);
+    job.cleanupTimer = undefined;
+  }
+
   for (const cleanup of job.cleanupPaths) {
     await cleanup();
   }
@@ -110,6 +132,26 @@ async function cleanupJobArtifacts(job: InternalJob): Promise<void> {
   }
 
   await fsPromises.rm(job.outputDir, { recursive: true, force: true });
+}
+
+async function cleanupAndDeleteJob(job: InternalJob): Promise<void> {
+  await cleanupJobArtifacts(job).catch(() => undefined);
+  jobs.delete(job.id);
+}
+
+function scheduleJobExpiration(job: InternalJob): void {
+  const expiresAtMs = Date.now() + env.downloadFileTtlMs;
+  const expiresAt = new Date(expiresAtMs).toISOString();
+
+  updateJob(job, {
+    expiresAt,
+    message: `Ready for download (expires at ${expiresAt})`
+  });
+
+  job.cleanupTimer = setTimeout(() => {
+    logJob(job.id, `artifact expired at ${expiresAt}, cleaning up`);
+    void cleanupAndDeleteJob(job);
+  }, env.downloadFileTtlMs);
 }
 
 async function buildZipArchive(job: InternalJob, results: DownloadResult[]): Promise<{ filePath: string; downloadName: string }> {
@@ -177,6 +219,7 @@ async function processJob(jobId: string): Promise<void> {
           url: job.urls[urlIndex],
           format,
           cookiesFilePath: job.cookiesFilePath,
+          signal: job.abortController.signal,
           progress: (stage, detail, stagePercent) => {
             updateJob(job, {
               message: createProgressMessage(currentItem, total, stage, detail),
@@ -241,23 +284,33 @@ async function processJob(jobId: string): Promise<void> {
         detail: finalArtifact.downloadName
       }
     });
+
+    scheduleJobExpiration(job);
   } catch (error) {
-    const message = error instanceof Error ? error.message : "Download failed.";
+    const isAbort =
+      job.abortController.signal.aborted ||
+      (error instanceof Error && (error.name === "AbortError" || /aborted/i.test(error.message)));
+    const message =
+      error instanceof Error
+        ? error.message
+        : isAbort
+          ? "Download was cancelled."
+          : "Download failed.";
     updateJob(job, {
-      status: "failed",
+      status: isAbort ? "cancelled" : "failed",
       message,
-      error: message,
+      error: isAbort ? undefined : message,
       progress: {
         current: job.progress.current,
         percent: job.progress.percent,
         itemPercent: job.progress.itemPercent,
-        stage: "failed",
+        stage: isAbort ? "cancelled" : "failed",
         detail: message
       }
     });
   } finally {
-    if (job.status === "failed") {
-      await cleanupJobArtifacts(job).catch(() => undefined);
+    if (job.status === "failed" || job.status === "cancelled") {
+      await cleanupAndDeleteJob(job);
     }
   }
 }
@@ -284,7 +337,8 @@ export function createDownloadJob(input: JobInput): DownloadJobSummary {
     formats: input.formats,
     cookiesFilePath: input.cookiesFilePath,
     outputDir: path.join(env.tempRoot, `job-${id}`),
-    cleanupPaths: []
+    cleanupPaths: [],
+    abortController: new AbortController()
   };
 
   void fsPromises.mkdir(job.outputDir, { recursive: true });
@@ -303,6 +357,7 @@ export function summarizeJob(job: InternalJob): DownloadJobSummary {
     message: job.message,
     downloadName: job.downloadName,
     error: job.error,
+    expiresAt: job.expiresAt,
     createdAt: job.createdAt,
     updatedAt: job.updatedAt
   };
@@ -331,8 +386,36 @@ export async function getDownloadJobFile(jobId: string): Promise<{ filePath: str
     filePath: job.filePath,
     downloadName: job.downloadName,
     cleanup: async () => {
-      await cleanupJobArtifacts(job).catch(() => undefined);
-      jobs.delete(jobId);
+      await cleanupAndDeleteJob(job);
     }
   };
+}
+
+export async function cancelDownloadJob(jobId: string): Promise<void> {
+  const job = jobs.get(jobId);
+  if (!job) {
+    return;
+  }
+
+  if (job.status === "completed") {
+    logJob(job.id, "cancel requested after completion; cleaning up artifact");
+    await cleanupAndDeleteJob(job);
+    return;
+  }
+
+  if (job.status === "failed" || job.status === "cancelled") {
+    await cleanupAndDeleteJob(job);
+    return;
+  }
+
+  updateJob(job, {
+    status: "cancelled",
+    message: "Download cancelled by client",
+    progress: {
+      stage: "cancelled",
+      detail: "client disconnected"
+    }
+  });
+
+  job.abortController.abort();
 }
