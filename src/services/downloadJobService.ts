@@ -35,6 +35,7 @@ interface InternalJob extends DownloadJobSummary {
 }
 
 const jobs = new Map<string, InternalJob>();
+const DOWNLOAD_PROGRESS_MAX = 96;
 
 function logJob(jobId: string, message: string): void {
   const timestamp = new Date().toISOString();
@@ -57,7 +58,7 @@ function normalizePercent(current: number, total: number, stageProgress = 0): nu
 
   const itemProgress = Math.min(Math.max(stageProgress, 0), 100) / 100;
   const overall = ((current - 1) + itemProgress) / total;
-  return Math.max(0, Math.min(100, Math.round(overall * 1000) / 10));
+  return Math.max(0, Math.min(DOWNLOAD_PROGRESS_MAX, Math.round(overall * DOWNLOAD_PROGRESS_MAX * 10) / 10));
 }
 
 function updateJob(
@@ -97,7 +98,8 @@ function updateJob(
   if (patch.progress) {
     job.progress = {
       ...job.progress,
-      ...patch.progress
+      ...patch.progress,
+      percent: Math.max(job.progress.percent, patch.progress.percent ?? job.progress.percent)
     };
   }
 
@@ -341,7 +343,7 @@ async function processJob(jobId: string): Promise<void> {
         message: createProgressMessage(total, total, "packaging", "building zip"),
         progress: {
           current: total,
-          percent: 96,
+          percent: DOWNLOAD_PROGRESS_MAX,
           itemPercent: 96,
           stage: "packaging",
           detail: "building zip"
