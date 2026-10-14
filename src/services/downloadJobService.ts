@@ -197,8 +197,19 @@ async function buildZipArchive(
     archive.on("error", reject);
 
     archive.pipe(output);
+    const originalNames = new Set(results.map((file) => file.downloadName));
+    const usedNames = new Set<string>();
     for (const file of results) {
-      archive.file(file.filePath, { name: file.downloadName });
+      let entryName = file.downloadName;
+      if (usedNames.has(entryName)) {
+        const { name, ext } = path.parse(file.downloadName);
+        let sequence = 2;
+        do {
+          entryName = `${name} (${sequence++})${ext}`;
+        } while (usedNames.has(entryName) || originalNames.has(entryName));
+      }
+      usedNames.add(entryName);
+      archive.file(file.filePath, { name: entryName });
     }
 
     if (failedItems.length > 0) {

@@ -13,6 +13,7 @@ vi.mock("../src/services/downloaderService", () => ({
 import fs from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
+import { inflateRawSync } from "node:zlib";
 
 import { createDownloadJob, getDownloadJob, getDownloadJobFile, getDownloadJobItemFile } from "../src/services/downloadJobService";
 
@@ -30,7 +31,73 @@ async function waitForTerminalStatus(jobId: string, timeoutMs = 2000): Promise<R
   throw new Error("Timed out waiting for terminal job status");
 }
 
+// Read the central directory because archiver streams sizes in data descriptors.
+// This only extracts the small, unencrypted ZIP fixtures produced by these tests.
+async function extractTestZip(filePath: string, outputDir: string): Promise<string[]> {
+  const zip = await fs.readFile(filePath);
+  const end = zip.lastIndexOf(Buffer.from([0x50, 0x4b, 0x05, 0x06]));
+  expect(end).toBeGreaterThanOrEqual(0);
+  const count = zip.readUInt16LE(end + 10);
+  let offset = zip.readUInt32LE(end + 16);
+  const names: string[] = [];
+  await fs.mkdir(outputDir);
+  for (let index = 0; index < count; index += 1) {
+    expect(zip.readUInt32LE(offset)).toBe(0x02014b50);
+    const method = zip.readUInt16LE(offset + 10);
+    const compressedSize = zip.readUInt32LE(offset + 20);
+    const size = zip.readUInt32LE(offset + 24);
+    const nameLength = zip.readUInt16LE(offset + 28);
+    const name = zip.toString("utf8", offset + 46, offset + 46 + nameLength);
+    const localOffset = zip.readUInt32LE(offset + 42);
+    expect(zip.readUInt32LE(localOffset)).toBe(0x04034b50);
+    const dataOffset = localOffset + 30 + zip.readUInt16LE(localOffset + 26) + zip.readUInt16LE(localOffset + 28);
+    const compressed = zip.subarray(dataOffset, dataOffset + compressedSize);
+    expect([0, 8]).toContain(method);
+    const content = method === 8 ? inflateRawSync(compressed) : compressed;
+    expect(content.length).toBe(size);
+    await fs.writeFile(path.join(outputDir, name), content);
+    names.push(name);
+    offset += 46 + nameLength + zip.readUInt16LE(offset + 30) + zip.readUInt16LE(offset + 32);
+  }
+  return names;
+}
+
 describe("download job service", () => {
+  it.each([
+    { scenario: "unique names and different extensions", input: ["same.mp4", "same.mp3", "other.mp4"], expected: ["same.mp4", "same.mp3", "other.mp4"] },
+    { scenario: "identical titles", input: ["same.mp4", "same.mp4"], expected: ["same.mp4", "same (2).mp4"] },
+    { scenario: "multiple Unicode duplicates", input: ["音樂🎵.mp3", "音樂🎵.mp3", "音樂🎵.mp3"], expected: ["音樂🎵.mp3", "音樂🎵 (2).mp3", "音樂🎵 (3).mp3"] },
+    { scenario: "existing numbered names", input: ["same.mp4", "same.mp4", "same (2).mp4", "same.mp4", "same (3).mp4"], expected: ["same.mp4", "same (4).mp4", "same (2).mp4", "same (5).mp4", "same (3).mp4"] }
+  ])("extracts every file without overwrites for $scenario", async ({ input, expected }) => {
+    mocks.prepareDownload.mockReset();
+    const tmpDir = await fs.mkdtemp(path.join(os.tmpdir(), "ytdl-zip-names-"));
+    let artifactPath: string | undefined;
+    const contents = input.map((_, index) => Buffer.from(`Distinct media payload ${index}\n`, "utf8"));
+    try {
+      for (const [index, downloadName] of input.entries()) {
+        const filePath = path.join(tmpDir, `source-${index}`);
+        await fs.writeFile(filePath, contents[index]);
+        mocks.prepareDownload.mockResolvedValueOnce({ filePath, downloadName, cleanup: async () => {} });
+      }
+      const created = createDownloadJob({ urls: input.map((_, index) => `https://youtu.be/video-${index}`), formats: ["mp4"] });
+      expect((await waitForTerminalStatus(created.id)).status).toBe("completed");
+      const artifact = await getDownloadJobFile(created.id);
+      artifactPath = artifact.filePath;
+      const outputDir = path.join(tmpDir, "extracted");
+      const names = await extractTestZip(artifactPath, outputDir);
+      expect(names).toHaveLength(input.length);
+      expect(new Set(names).size).toBe(input.length);
+      expect([...names].sort()).toEqual([...expected].sort());
+      expect((await fs.readdir(outputDir)).sort()).toEqual([...expected].sort());
+      for (const [index, name] of expected.entries()) {
+        expect(await fs.readFile(path.join(outputDir, name))).toEqual(contents[index]);
+      }
+    } finally {
+      if (artifactPath) await fs.rm(path.dirname(artifactPath), { recursive: true, force: true });
+      await fs.rm(tmpDir, { recursive: true, force: true });
+    }
+  });
+
   it.each(["batch", "partial success", "single file"])("keeps overall progress monotonic until the %s artifact is ready", async (scenario) => {
     mocks.prepareDownload.mockReset();
     const tmpDir = await fs.mkdtemp(path.join(os.tmpdir(), "ytdl-progress-"));
