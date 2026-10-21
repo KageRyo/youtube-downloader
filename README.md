@@ -152,7 +152,7 @@ Use Node.js 22 or 24 (CI checks both on Linux and Windows). `.nvmrc` selects Nod
 Run the same checks locally:
 
 ```bash
-npm ci
+npm ci --ignore-scripts
 npm run typecheck
 npm run build
 npm test
