@@ -66,6 +66,13 @@ const i18n = {
   }
 };
 
+const qualityI18n = {
+  videoResolutionLabel: { en: "Maximum video resolution", "zh-Hant": "影片解析度上限" },
+  audioBitrateLabel: { en: "MP3 bitrate", "zh-Hant": "MP3 位元率" },
+  qualityBest: { en: "Best available (default)", "zh-Hant": "最佳可用品質（預設）" },
+  qualityHelp: { en: "Video uses the best available resolution at or below your selection; unavailable formats fail clearly.", "zh-Hant": "影片會使用不超過所選上限的最佳解析度；沒有可用格式時會顯示錯誤。" }
+};
+
 const localeStorageKey = "preferredLocale";
 let currentLocale = "en";
 let activeJobId = null;
@@ -77,7 +84,7 @@ function isCancellableStatus(status) {
 }
 
 function getLocaleText(key) {
-  return i18n[currentLocale]?.[key] ?? i18n.en[key] ?? "";
+  return qualityI18n[key]?.[currentLocale] ?? i18n[currentLocale]?.[key] ?? i18n.en[key] ?? "";
 }
 
 function applyLocaleToPage() {

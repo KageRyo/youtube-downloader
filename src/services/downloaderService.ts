@@ -120,9 +120,9 @@ export async function prepareDownload(request: DownloadRequest): Promise<Downloa
     }
 
     if (request.format === "mp3") {
-      baseArgs.push("-x", "--audio-format", "mp3", "--audio-quality", "0");
+      baseArgs.push("-x", "--audio-format", "mp3", "--audio-quality", request.audioBitrate ? `${request.audioBitrate}K` : "0");
     } else {
-      baseArgs.push("-f", "bv*+ba/b", "--merge-output-format", "mp4", "--remux-video", "mp4", "-S", "vcodec:h264,acodec:aac");
+      baseArgs.push("-f", request.videoResolution ? `bv*[height<=${request.videoResolution}]+ba/b[height<=${request.videoResolution}]` : "bv*+ba/b", "--merge-output-format", "mp4", "--remux-video", "mp4", "-S", request.videoResolution ? "res,vcodec:h264,acodec:aac" : "vcodec:h264,acodec:aac");
     }
 
     baseArgs.push(request.url);

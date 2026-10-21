@@ -6,6 +6,7 @@ import { NextFunction, Request, Response } from "express";
 import { cancelDownloadJob, createDownloadJob, getDownloadJob, getDownloadJobFile, getDownloadJobItemFile } from "../services/downloadJobService";
 import { DownloadFormat } from "../types/download";
 import { env } from "../config/env";
+import { parseDownloadOptions, parseSelections, parseYouTubeUrl } from "../utils/downloadOptions";
 import { AppError } from "../utils/errors";
 
 function parseFormats(value: unknown): DownloadFormat[] {
@@ -17,33 +18,6 @@ function parseFormats(value: unknown): DownloadFormat[] {
   }
 
   return Array.from(new Set(formats));
-}
-
-function parseYouTubeUrl(value: unknown): string {
-  if (typeof value !== "string" || value.trim().length === 0) {
-    throw new AppError("A YouTube URL is required.", 400);
-  }
-
-  let parsed: URL;
-  try {
-    parsed = new URL(value.trim());
-  } catch {
-    throw new AppError("Invalid URL format.", 400);
-  }
-
-  const host = parsed.hostname.toLowerCase();
-  const isYoutube =
-    host === "youtu.be" ||
-    host === "youtube.com" ||
-    host.endsWith(".youtube.com") ||
-    host === "youtube-nocookie.com" ||
-    host.endsWith(".youtube-nocookie.com");
-
-  if (!isYoutube) {
-    throw new AppError("Only YouTube URLs are supported.", 400);
-  }
-
-  return parsed.toString();
 }
 
 function parseYouTubeUrls(singleValue: unknown, multiValue: unknown): string[] {
@@ -102,14 +76,18 @@ async function saveCookiesUpload(cookiesBuffer?: Buffer): Promise<{ path?: strin
 
 export async function createJobHandler(req: Request, res: Response, next: NextFunction): Promise<void> {
   try {
-    const urls = parseYouTubeUrls(req.body.url, req.body.urls);
-    const formats = parseFormats(req.body.format);
+    const items = parseSelections(req.body.items);
+    const urls = items ? [...new Set(items.map((item) => item.url))] : parseYouTubeUrls(req.body.url, req.body.urls);
+    const formats = items ? [...new Set(items.map((item) => item.format))] : parseFormats(req.body.format);
+    const options = parseDownloadOptions(req.body);
     const cookieFile = await saveCookiesUpload(req.file?.buffer);
 
     try {
       const job = createDownloadJob({
         urls,
         formats,
+        items,
+        ...options,
         cookiesFilePath: cookieFile.path
       });
 

@@ -179,3 +179,25 @@ describe("job admission", () => {
     } finally { env.creationRateLimit = previous; }
   });
 });
+
+describe("download options", () => {
+  it("passes supported quality options to the job", async () => {
+    mocks.createDownloadJob.mockReset().mockReturnValue(queuedJob);
+    await request(createApp()).post("/api/download").field("urls", "https://youtu.be/a")
+      .field("format", "mp4").field("videoResolution", "720").field("audioBitrate", "192").expect(202);
+    expect(mocks.createDownloadJob.mock.calls[0][0]).toMatchObject({ videoResolution: 720, audioBitrate: 192 });
+  });
+  it.each([["videoResolution", "720;evil"], ["audioBitrate", "999"], ["videoResolution", "-1"]])("rejects unsupported %s=%s", async (key, value) => {
+    await request(createApp()).post("/api/download").field("urls", "https://youtu.be/a")
+      .field("format", "mp4").field(key, value).expect(400);
+  });
+  it("accepts exact retry pairs without expanding them into a cross-product", async () => {
+    mocks.createDownloadJob.mockReset().mockReturnValue(queuedJob);
+    const items = [{ url: "https://youtu.be/a", format: "mp3" }, { url: "https://youtu.be/b", format: "mp4" }];
+    await request(createApp()).post("/api/download").field("items", JSON.stringify(items)).expect(202);
+    expect(mocks.createDownloadJob.mock.calls[0][0].items).toEqual(items);
+  });
+  it.each(["not json", "[]", '[{"url":"https://example.com/a","format":"mp4"}]', '[{"url":"https://youtu.be/a","format":"exe"}]'])("rejects invalid retry item selection", async (items) => {
+    await request(createApp()).post("/api/download").field("items", items).expect(400);
+  });
+});
