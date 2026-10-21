@@ -56,41 +56,70 @@ export function runCommand(
       return;
     }
 
-    const child = spawn(options.preferLocal === false ? command : resolveExecutable(command), args, { stdio: ["ignore", "pipe", "pipe"] });
+    const child = spawn(options.preferLocal === false ? command : resolveExecutable(command), args, {
+      stdio: ["ignore", "pipe", "pipe"],
+      detached: process.platform !== "win32",
+      windowsHide: true
+    });
     const shouldEmitOutput = options.emitOutput ?? false;
     const prefix = options.logPrefix ? `[${options.logPrefix}] ` : `[${command}] `;
     let settled = false;
+    let aborted = false;
+    let closed = false;
+    let terminationPending = false;
+    let escalation: NodeJS.Timeout | undefined;
 
-    const finishResolve = (value: CommandResult) => {
-      if (settled) {
-        return;
-      }
-      settled = true;
-      resolve(value);
+    const cleanup = () => {
+      if (escalation) clearTimeout(escalation);
+      options.signal?.removeEventListener("abort", handleAbort);
     };
-
     const finishReject = (error: Error) => {
-      if (settled) {
-        return;
-      }
+      if (settled) return;
       settled = true;
+      cleanup();
       reject(error);
     };
-
-    const handleAbort = () => {
-      child.kill("SIGTERM");
-      setTimeout(() => {
-        if (child.exitCode === null) {
-          child.kill("SIGKILL");
-        }
-      }, 1500);
-
+    const finishAbort = () => {
+      if (!closed || terminationPending) return;
       const error = new Error("Command execution aborted.");
       error.name = "AbortError";
       finishReject(error);
     };
-
+    const signalTree = (signal: NodeJS.Signals) => {
+      if (child.pid && process.platform !== "win32") {
+        try { process.kill(-child.pid, signal); } catch (error) {
+          if ((error as NodeJS.ErrnoException).code !== "ESRCH") throw error;
+        }
+      } else {
+        child.kill(signal);
+      }
+    };
+    const groupExists = () => {
+      if (!child.pid || process.platform === "win32") return false;
+      try { process.kill(-child.pid, 0); return true; } catch { return false; }
+    };
+    const handleAbort = () => {
+      if (aborted || settled) return;
+      aborted = true;
+      if (process.platform === "win32" && child.pid) {
+        // taskkill terminates the full tree; child.kill alone leaves FFmpeg alive.
+        terminationPending = true;
+        const killer = spawn(path.join(process.env.SystemRoot ?? "C:\\Windows", "System32", "taskkill.exe"), ["/PID", String(child.pid), "/T", "/F"], { stdio: "ignore", windowsHide: true });
+        killer.once("error", () => { child.kill("SIGKILL"); });
+        killer.once("close", () => { terminationPending = false; finishAbort(); });
+      } else {
+        signalTree("SIGTERM");
+        escalation = setTimeout(() => {
+          signalTree("SIGKILL");
+          terminationPending = false;
+          finishAbort();
+        }, 1500);
+        terminationPending = true;
+      }
+    };
     options.signal?.addEventListener("abort", handleAbort, { once: true });
+    // Abort may have happened while spawn was being called.
+    if (options.signal?.aborted) handleAbort();
 
     let stdout = "";
     let stderr = "";
@@ -116,17 +145,20 @@ export function runCommand(
     });
 
     child.on("error", (error) => {
-      options.signal?.removeEventListener("abort", handleAbort);
-      finishReject(error);
+      if (!aborted || !child.pid) finishReject(error);
     });
 
     child.on("close", (code) => {
-      options.signal?.removeEventListener("abort", handleAbort);
-      finishResolve({
-        code: code ?? 1,
-        stdout,
-        stderr
-      });
+      closed = true;
+      if (aborted) {
+        if (!child.pid || process.platform !== "win32" && !groupExists()) terminationPending = false;
+        finishAbort();
+        return;
+      }
+      if (settled) return;
+      settled = true;
+      cleanup();
+      resolve({ code: code ?? 1, stdout, stderr });
     });
   });
 }

@@ -21,6 +21,7 @@ class FakeChild extends EventEmitter {
   exitCode: number | null = null;
   kill(): boolean {
     this.exitCode = 0;
+    queueMicrotask(() => this.emit("close", 0));
     return true;
   }
 }
