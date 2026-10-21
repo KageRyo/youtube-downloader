@@ -193,8 +193,8 @@ src/
 
 Form fields:
 
-- `urls` (required): one or more YouTube URLs, one per line
-- `format` (required): one or more of `mp3`, `mp4`, `srt`, `vtt` (repeat field for multiple selections)
+- `urls` (required unless `items` is supplied): one or more YouTube URLs, one per line
+- `format` (required unless `items` is supplied): one or more of `mp3`, `mp4`, `srt`, `vtt` (repeat field for multiple selections)
 - `videoResolution` / `audioBitrate` (optional): quality presets above
 - `subtitleLanguages` / `subtitleSource` (optional): caption options above
 - `items` (optional): JSON array of exact `{url, format, subtitleLanguage?, subtitleSource?}` items for retry; when supplied, it replaces the URL/format cross-product (up to 60 items and 30 unique URLs)
@@ -209,13 +209,14 @@ Behavior:
 - `GET /api/download/:jobId/file` streams the finished file when the job is complete.
 - `GET /api/download/:jobId/items/:itemId/file` streams one successful item from the job.
 - `POST /api/download/:jobId/cancel` cancels queued/running work. Cancellation is terminal, skips remaining items and removes partial artifacts after process termination; completed artifacts remain available until TTL.
-- One output item: the job produces one file.
-- Multiple output items (URLs, formats or subtitle languages): the job bundles successful outputs into one ZIP with a report of any failed items.
+- One successful output with no failed items produces one file.
+- Multiple successful outputs, or any mix of successful and failed items, produce a ZIP with a report of failed items.
+- If every item fails, the job fails without a downloadable artifact.
 - Completed files expire automatically after the configured TTL and are removed from disk.
 - Cancellation waits for the downloader process to close before file cleanup. Linux/macOS signal the process group and escalate after 1.5 seconds; Windows terminates the process tree with `taskkill /T /F`.
 - The web task panel shows every item status, error, and available download. Use **Cancel** to stop a queued/running job. Closing or reloading the page keeps server work running; the same tab recovers jobs from sessionStorage until the server TTL expires. Only opaque job UUIDs are saved, never URLs, titles, cookies, or settings.
-- **Retry failed items** creates a new job with only failed output items, keeping successful downloads intact. During the same page session it preserves the original submission settings and cookies file in memory. After reload, choose settings and reselect cookies.txt in the form before retrying. The multipart `items` field accepts exact URL/format items; captions also carry their original `subtitleLanguage` and `subtitleSource`.
-- 網頁任務面板提供逐項狀態、錯誤、下載、取消與失敗項目重試。關閉或重新載入網頁不會取消伺服器任務；同一分頁會在 TTL 期限內恢復查詢。僅保存任務 UUID，不保存網址、標題、cookies 或設定。重新載入後，重試使用目前表單設定，請視需要重新選取 cookies.txt。
+- **Retry failed items** creates a new job with only failed output items, keeping successful downloads intact. During the same page session it preserves the original submission settings and cookies file in memory. After reload, choose quality settings and reselect cookies.txt in the form before retrying; caption retries retain their original language and source. The multipart `items` field accepts exact URL/format items; captions also carry their original `subtitleLanguage` and `subtitleSource`.
+- 網頁任務面板提供逐項狀態、錯誤、下載、取消與失敗項目重試。關閉或重新載入網頁不會取消伺服器任務；同一分頁會在 TTL 期限內恢復查詢。僅保存任務 UUID，不保存網址、標題、cookies 或設定。重新載入後，重試使用目前表單的畫質設定，請視需要重新選取 cookies.txt；字幕重試仍保留原語言與字幕來源。
 - If no authentication is required, cookies are not needed.
 - If access is restricted, provide a valid `cookies.txt` from an account that has legal access.
 - If configured, the server will automatically retry with `--cookies-from-browser` when YouTube asks for sign-in verification.
