@@ -18,7 +18,7 @@ interface RunCommandOptions {
   signal?: AbortSignal;
 }
 
-function resolveExecutable(command: string): string {
+export function resolveExecutable(command: string): string {
   if (command.includes(path.sep)) {
     return command;
   }
