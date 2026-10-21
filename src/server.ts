@@ -1,24 +1,34 @@
 import { createApp } from "./app";
 import { shutdownDownloadJobs } from "./services/downloadJobService";
 import { env } from "./config/env";
+import { collectOrphanTempDirectories } from "./services/tempDirectoryService";
 
-const app = createApp();
+async function start(): Promise<void> {
+  const removed = await collectOrphanTempDirectories(env.tempRoot, env.orphanTempMaxAgeMs);
+  if (removed > 0) console.log(`Removed ${removed} orphan temporary directories.`);
+  const app = createApp();
 
-const server = app.listen(env.port, env.host, () => {
-  console.log(`YouTube downloader server running at http://${env.host}:${env.port}`);
-});
+  const server = app.listen(env.port, env.host, () => {
+    console.log(`YouTube downloader server running at http://${env.host}:${env.port}`);
+  });
 
-let stopping = false;
-async function shutdown(): Promise<void> {
-  if (stopping) return;
-  stopping = true;
-  const closed = new Promise<void>((resolve, reject) => server.close((error) => error ? reject(error) : resolve()));
-  try {
-    await Promise.all([shutdownDownloadJobs(), closed]);
-  } catch {
-    console.error("Server shutdown could not clean all download artifacts.");
-    process.exitCode = 1;
+  let stopping = false;
+  async function shutdown(): Promise<void> {
+    if (stopping) return;
+    stopping = true;
+    const closed = new Promise<void>((resolve, reject) => server.close((error) => error ? reject(error) : resolve()));
+    try {
+      await Promise.all([shutdownDownloadJobs(), closed]);
+    } catch {
+      console.error("Server shutdown could not clean all download artifacts.");
+      process.exitCode = 1;
+    }
   }
+  process.on("SIGINT", () => { void shutdown(); });
+  process.on("SIGTERM", () => { void shutdown(); });
 }
-process.on("SIGINT", () => { void shutdown(); });
-process.on("SIGTERM", () => { void shutdown(); });
+
+void start().catch(() => {
+  console.error("Server startup could not inspect temporary storage.");
+  process.exitCode = 1;
+});

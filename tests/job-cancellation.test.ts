@@ -1,6 +1,7 @@
 import fs from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
+import crypto from "node:crypto";
 import { afterEach, beforeEach, expect, it, vi } from "vitest";
 
 const mocks = vi.hoisted(() => ({ prepareDownload: vi.fn() }));
@@ -33,6 +34,18 @@ async function artifact(index: number) {
   await fs.writeFile(filePath, "media");
   return { filePath, downloadName: "media.mp4", cleanup: () => fs.rm(filePath, { force: true }) };
 }
+
+it("preserves a pre-existing directory when exclusive job ownership fails", async () => {
+  const id = "12345678-1234-1234-1234-123456789abc";
+  const directory = path.join(root, `job-${id}`);
+  await fs.mkdir(directory);
+  await fs.writeFile(path.join(directory, "unrelated.txt"), "keep me");
+  vi.spyOn(crypto, "randomUUID").mockReturnValueOnce(id);
+  const job = createDownloadJob({ urls: ["https://youtu.be/a"], formats: ["mp4"] });
+  await vi.waitFor(() => expect(getDownloadJob(job.id).expiresAt).toBeTruthy());
+  expect(getDownloadJob(job.id).status).toBe("failed");
+  expect(await fs.readFile(path.join(directory, "unrelated.txt"), "utf8")).toBe("keep me");
+});
 
 it("cancels before the first item starts", async () => {
   mocks.prepareDownload.mockRejectedValue(new Error("must not run"));

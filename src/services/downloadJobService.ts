@@ -8,6 +8,7 @@ import { DownloadFormat, DownloadOptions, DownloadSelection, DownloadJobItemSumm
 import { AppError } from "../utils/errors";
 import { env } from "../config/env";
 import { prepareDownload } from "./downloaderService";
+import { createOwnedTempDirectory } from "./tempDirectoryService";
 
 interface JobInput extends DownloadOptions {
   items?: DownloadSelection[];
@@ -26,6 +27,7 @@ interface InternalJob extends DownloadJobSummary, DownloadOptions {
   cookiesFilePath?: string;
   filePath?: string;
   outputDir: string;
+  outputDirOwned?: boolean;
   urls: string[];
   formats: DownloadFormat[];
   cleanupPaths: Array<() => Promise<void>>;
@@ -195,7 +197,7 @@ async function cleanupJobArtifacts(job: InternalJob): Promise<void> {
   for (const cleanup of job.cleanupPaths) {
     try { await cleanup(); } catch (error) { failures.push(error); }
   }
-  for (const directory of [job.outputDir, ...(job.cookiesFilePath ? [path.dirname(job.cookiesFilePath)] : [])]) {
+  for (const directory of [...(job.outputDirOwned ? [job.outputDir] : []), ...(job.cookiesFilePath ? [path.dirname(job.cookiesFilePath)] : [])]) {
     try { await fsPromises.rm(directory, { recursive: true, force: true }); } catch (error) { failures.push(error); }
   }
   job.itemArtifacts.clear();
@@ -331,7 +333,8 @@ async function processJob(jobId: string): Promise<void> {
   let checking: Promise<void> | undefined;
   let monitoring = false;
   try {
-    await fsPromises.mkdir(job.outputDir, { recursive: true });
+    await createOwnedTempDirectory(env.tempRoot, "job", job.id);
+    job.outputDirOwned = true;
     throwIfCancelled(job);
     updateJob(job, {
       status: "running",

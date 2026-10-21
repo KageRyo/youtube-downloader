@@ -82,6 +82,7 @@ Environment variables are loaded from `.env`.
 | `PORT` | No | `3000` | HTTP server port |
 | `DOWNLOADER_TMP_DIR` | No | OS temp directory | Temporary working directory for download jobs |
 | `DOWNLOAD_FILE_TTL_MINUTES` | No | `10` | Retention time for completed download artifacts before auto cleanup |
+| `ORPHAN_TEMP_MAX_AGE_MS` | No | `86400000` | Minimum age in milliseconds for startup recovery of abandoned owned directories |
 | `MAX_CONCURRENT_JOBS` | No | `2` | Running jobs per server process |
 | `MAX_QUEUED_JOBS` | No | `8` | Waiting jobs in addition to running jobs |
 | `MAX_RETAINED_JOBS` | No | `32` | Maximum total job records, including terminal records |
@@ -251,9 +252,31 @@ The rate limiter uses the socket client address and ignores forwarded headers.
 Behind a reverse proxy, clients share the proxy's limit; configure per-user/IP
 rate limits and authentication at that proxy. In-memory limits do not coordinate
 multiple instances. SIGINT/SIGTERM stops admission, aborts queued/running work,
-waits for termination and removes retained artifacts. A hard crash can leave
-orphaned directories (tracked separately in #9); clean them only when no process
-owns that temp root.
+waits for termination and removes retained artifacts.
+
+Jobs exist only in memory: after a restart, old job IDs return 404 and downloads
+do not resume. Before listening, the server checks for abandoned `job-<UUID>`
+and `cookies-<UUID>` directories in its temp root. New directories contain a
+private `.youtube-downloader-owner.json` marker with the creator PID, creation
+time and Linux boot/PID namespace identity. Nested item directories belong to
+their job and are removed with it. Uploaded cookies follow the same recovery
+rules as media artifacts.
+
+Startup recovery removes a directory only when its marker, creation time and
+directory modification time are older than `ORPHAN_TEMP_MAX_AGE_MS` (24 hours
+by default), its ownership identity matches the current Linux boot and PID
+namespace, and its creator PID no longer exists. A live or reused PID always
+preserves the directory, regardless of age. Recovery never follows directory or
+marker symlinks, guesses ownership of legacy unmarked directories, or removes
+unrelated paths. Fresh abandoned files wait for a later restart; collection is
+not periodic and does not restore the previous process's storage reservations.
+
+On other platforms, after a host reboot or PID namespace change, or when process
+identity cannot be verified, automatic recovery conservatively retains files.
+Review those leftovers manually only after confirming all processes using that
+temp root have stopped. Keep the root private and dedicated to this application;
+startup recovery does not replace a filesystem quota or coordination between
+server instances.
 
 ## Security and Access
 
