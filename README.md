@@ -1,5 +1,7 @@
 # YouTube Downloader
 
+Current release: **[v1.1.0](https://github.com/KageRyo/youtube-downloader/releases/tag/v1.1.0)**
+
 [![TypeScript](https://img.shields.io/badge/TypeScript-6.x-3178C6?logo=typescript&logoColor=white)](https://www.typescriptlang.org/)
 [![Node.js](https://img.shields.io/badge/Node.js-22%2B-3C873A?logo=node.js&logoColor=white)](https://nodejs.org/)
 [![UI Language](https://img.shields.io/badge/UI-English%20%7C%20%E7%B9%81%E9%AB%94%E4%B8%AD%E6%96%87-orange)](#internationalization)
