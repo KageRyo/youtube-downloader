@@ -48,6 +48,22 @@
             </div>
           </div>
 
+          <div class="field-block quality-controls">
+            <label for="videoResolution" data-i18n="videoResolutionLabel">Maximum video resolution</label>
+            <select id="videoResolution" name="videoResolution">
+              <option value="best" data-i18n="qualityBest">Best available (default)</option>
+              <option value="480">480p</option><option value="720">720p</option>
+              <option value="1080">1080p</option><option value="2160">2160p</option>
+            </select>
+            <label for="audioBitrate" data-i18n="audioBitrateLabel">MP3 bitrate</label>
+            <select id="audioBitrate" name="audioBitrate">
+              <option value="best" data-i18n="qualityBest">Best available (default)</option>
+              <option value="128">128 kbps</option><option value="192">192 kbps</option>
+              <option value="256">256 kbps</option><option value="320">320 kbps</option>
+            </select>
+            <p class="helper" data-i18n="qualityHelp">Video uses the best available resolution at or below your selection; unavailable formats fail clearly.</p>
+          </div>
+
           <div class="field-block">
             <label class="field-label" for="cookiesFile" data-i18n="cookiesLabel"
               >cookies.txt (Optional. Usually not required unless access is restricted.)</label

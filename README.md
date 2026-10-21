@@ -102,6 +102,16 @@ with an error; the app does not silently return WebM/MKV or spend CPU transcodin
 The best available resolution may use codecs unsupported by older players.
 MP3 keeps its existing highest-quality VBR conversion policy.
 
+### Quality selection
+
+`videoResolution` accepts `480`, `720`, `1080` or `2160` as a maximum height.
+The best source at or below the cap is selected, with no upscaling; a source with
+no matching format fails instead of exceeding the cap. MP4 codecs/container are
+still verified. `audioBitrate` accepts `128`, `192`, `256` or `320` kbps for MP3.
+Omitting either field (or selecting `best`) preserves previous defaults. A higher
+resolution or bitrate generally increases size and conversion cost; bitrate alone
+does not improve a low-quality source.
+
 ## Internationalization
 
 - Default UI language: English
@@ -153,6 +163,8 @@ Form fields:
 
 - `urls` (required): one or more YouTube URLs, one per line
 - `format` (required): one or both of `mp3`, `mp4` (repeat field for multiple selections)
+- `videoResolution` / `audioBitrate` (optional): quality presets above
+- `items` (optional): JSON array of exact `{url, format}` pairs for retry; when supplied, it replaces the URL/format cross-product (up to 60 items and 30 unique URLs)
 - `cookiesFile` (optional): `cookies.txt` for authenticated access
 
 Behavior:

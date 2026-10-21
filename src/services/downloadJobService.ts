@@ -4,12 +4,13 @@ import path from "node:path";
 import crypto from "node:crypto";
 import archiver from "archiver";
 
-import { DownloadFormat, DownloadJobItemSummary, DownloadJobSummary, DownloadResult } from "../types/download";
+import { DownloadFormat, DownloadOptions, DownloadSelection, DownloadJobItemSummary, DownloadJobSummary, DownloadResult } from "../types/download";
 import { AppError } from "../utils/errors";
 import { env } from "../config/env";
 import { prepareDownload } from "./downloaderService";
 
-interface JobInput {
+interface JobInput extends DownloadOptions {
+  items?: DownloadSelection[];
   urls: string[];
   formats: DownloadFormat[];
   cookiesFilePath?: string;
@@ -21,7 +22,7 @@ interface FailedItem {
   message: string;
 }
 
-interface InternalJob extends DownloadJobSummary {
+interface InternalJob extends DownloadJobSummary, DownloadOptions {
   cookiesFilePath?: string;
   filePath?: string;
   outputDir: string;
@@ -353,15 +354,11 @@ async function processJob(jobId: string): Promise<void> {
     let completed = 0;
     let processed = 0;
 
-    for (let urlIndex = 0; urlIndex < job.urls.length; urlIndex += 1) {
-      for (const format of job.formats) {
+    for (const item of job.items) {
         throwIfCancelled(job);
+        const format = item.format;
         const currentItem = processed + 1;
-        const requestLabel = `${urlIndex + 1}/${job.urls.length} ${format}`;
-        const item = job.items[currentItem - 1];
-        if (!item) {
-          throw new AppError("Download item state is out of sync.", 500);
-        }
+        const requestLabel = `${currentItem}/${total} ${format}`;
         item.status = "running";
 
         updateJob(job, {
@@ -377,11 +374,13 @@ async function processJob(jobId: string): Promise<void> {
 
         try {
           const prepared = await prepareDownload({
-            url: job.urls[urlIndex],
+            url: item.url,
             format,
             cookiesFilePath: job.cookiesFilePath,
             tempRoot: job.outputDir,
             maxBytes: env.maxJobBytes,
+            videoResolution: job.videoResolution,
+            audioBitrate: job.audioBitrate,
             signal: job.abortController.signal,
             progress: (stage, detail, stagePercent) => {
               if (job.abortController.signal.aborted) return;
@@ -430,7 +429,7 @@ async function processJob(jobId: string): Promise<void> {
           processed += 1;
           const message = error instanceof Error ? error.message : "Unknown item error";
           failedItems.push({
-            url: job.urls[urlIndex],
+            url: item.url,
             format,
             message
           });
@@ -449,7 +448,6 @@ async function processJob(jobId: string): Promise<void> {
             }
           });
         }
-      }
     }
 
     throwIfCancelled(job);
@@ -540,19 +538,9 @@ export function createDownloadJob(input: JobInput): DownloadJobSummary {
   if (activeJobs.size + pendingJobs.length >= env.maxConcurrentJobs + env.maxQueuedJobs) throw new AppError("Download queue is at capacity. Retry later.", 503);
   if (reservedBytes + env.maxJobBytes > env.maxStorageBytes) throw new AppError("Download storage capacity reached. Retry after files expire.", 503);
   const id = crypto.randomUUID();
-  const items: DownloadJobItemSummary[] = [];
-  for (const url of input.urls) {
-    for (const format of input.formats) {
-      items.push({
-        id: crypto.randomUUID(),
-        url,
-        format,
-        status: "pending"
-      });
-    }
-  }
-
-  const total = Math.max(1, input.urls.length * input.formats.length);
+  const selections = input.items ?? input.urls.flatMap((url) => input.formats.map((format) => ({ url, format })));
+  const items: DownloadJobItemSummary[] = selections.map((item) => ({ ...item, id: crypto.randomUUID(), status: "pending" }));
+  const total = items.length;
   const createdAt = nowIso();
 
   const job: InternalJob = {
@@ -571,6 +559,8 @@ export function createDownloadJob(input: JobInput): DownloadJobSummary {
     failedItems: 0,
     createdAt,
     updatedAt: createdAt,
+    videoResolution: input.videoResolution,
+    audioBitrate: input.audioBitrate,
     urls: input.urls,
     formats: input.formats,
     cookiesFilePath: input.cookiesFilePath,

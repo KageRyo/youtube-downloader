@@ -15,9 +15,17 @@ export interface DownloadJobProgress {
   detail?: string;
 }
 
-export interface DownloadRequest {
+export interface DownloadOptions {
+  videoResolution?: number;
+  audioBitrate?: number;
+}
+
+export interface DownloadSelection {
   url: string;
   format: DownloadFormat;
+}
+
+export interface DownloadRequest extends DownloadOptions, DownloadSelection {
   cookiesFilePath?: string;
   tempRoot?: string;
   maxBytes?: number;

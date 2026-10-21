@@ -283,3 +283,5 @@ input:focus {
     padding: 20px 16px;
   }
 }
+
+.quality-controls select { padding: 0.65rem; border: 1px solid var(--line); border-radius: 8px; background: #fff; color: inherit; font: inherit; }
