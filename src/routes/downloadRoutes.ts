@@ -1,5 +1,6 @@
 import { Router } from "express";
 import multer from "multer";
+import { previewHandler } from "../controllers/previewController";
 import { createDownloadRateLimit } from "../middleware/downloadRateLimit";
 
 import { cancelJobHandler, createJobHandler, getJobFileHandler, getJobItemFileHandler, getJobStatusHandler, healthHandler } from "../controllers/downloadController";
@@ -19,6 +20,7 @@ export function createDownloadRoutes() {
   const downloadRoutes = Router();
 
   downloadRoutes.get("/health", healthHandler);
+  downloadRoutes.post("/preview", createDownloadRateLimit(), previewHandler);
   downloadRoutes.post("/download", createDownloadRateLimit(), upload.single("cookiesFile"), createJobHandler);
   downloadRoutes.get("/download/:jobId", getJobStatusHandler);
   downloadRoutes.get("/download/:jobId/file", getJobFileHandler);

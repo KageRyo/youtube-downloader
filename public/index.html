@@ -84,8 +84,11 @@
             </div>
           </div>
 
+          <button id="previewBtn" class="secondary" type="button">Preview videos</button>
           <button id="submitBtn" type="submit" data-i18n="downloadButton">Download</button>
         </form>
+
+        <section id="videoPreview" class="video-preview hidden" aria-live="polite"></section>
 
         <div class="progress-shell" aria-label="Download progress">
           <div id="progressBar" class="progress-fill" style="width: 0%"></div>
@@ -113,5 +116,6 @@
     </main>
 
     <script src="/app.js"></script>
+    <script src="/preview.js"></script>
   </body>
 </html>

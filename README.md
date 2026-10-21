@@ -112,6 +112,18 @@ Omitting either field (or selecting `best`) preserves previous defaults. A highe
 resolution or bitrate generally increases size and conversion cost; bitrate alone
 does not improve a low-quality source.
 
+### Video preview
+
+Use **Preview videos** before downloading, or `POST /api/preview` with JSON
+`{"urls":["https://youtu.be/..."]}`. Up to 30 URLs are handled sequentially;
+only two preview requests run per process, each with a 60-second batch budget
+and 15-second per-video budget. The response exposes only the submitted URL,
+title, optional duration and approved YouTube thumbnail, or a per-item error.
+Preview never starts a media download, writes an artifact or uses uploaded/browser
+cookies. Private/unavailable videos may therefore fail preview even if an
+authenticated download is possible. Thumbnail requests use HTTPS YouTube image
+hosts with query credentials removed and no referrer; other hosts are omitted.
+
 ## Internationalization
 
 - Default UI language: English
