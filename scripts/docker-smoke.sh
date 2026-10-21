@@ -31,8 +31,11 @@ assert files("yt_dlp_ejs.yt.solver").joinpath("lib.min.js").read_bytes()
 print("Bundled EJS solver resources are readable.")
 PYTHON
 endpoint="$("${compose[@]}" port app 3000)"
-curl --fail --silent "http://${endpoint}/api/health" | python3 -c 'import json,sys; assert json.load(sys.stdin)["ok"] is True'
+# Allow only the local published health port and never route it through a proxy.
+[[ "$endpoint" =~ ^127\.0\.0\.1:[0-9]+$ ]]
+health="$(curl --noproxy '*' --fail --silent "http://${endpoint}/api/health")" # NOSONAR: Loopback-only public health check sends no sensitive data.
+printf '%s' "$health" | python3 -c 'import json,sys; assert json.load(sys.stdin)["ok"] is True'
 container="$("${compose[@]}" ps -q app)"
 "${compose[@]}" stop app
-test "$(docker inspect --format '{{.State.ExitCode}}' "$container")" = 0
+[[ "$(docker inspect --format '{{.State.ExitCode}}' "$container")" = 0 ]]
 echo 'Docker smoke passed: health, dependencies, non-root, storage cap, read-only filesystem, graceful shutdown.'

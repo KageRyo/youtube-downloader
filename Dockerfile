@@ -1,11 +1,13 @@
-# Refresh this manifest digest deliberately when updating Node/security fixes.
-FROM node:22-bookworm-slim@sha256:3ed98443660ff48413b5af19ecefce3b9d50845a901a43420d47cc63a9fddbe9 AS base
+# Node 22 / Debian bookworm-slim; refresh this manifest digest for security fixes.
+FROM node@sha256:3ed98443660ff48413b5af19ecefce3b9d50845a901a43420d47cc63a9fddbe9 AS base
 
 # Bootstrap apt HTTPS from the pinned Node image's bundled Mozilla CA roots.
-RUN node -e "const fs=require('node:fs'); fs.mkdirSync('/etc/ssl/certs',{recursive:true}); fs.writeFileSync('/etc/ssl/certs/ca-certificates.crt',require('node:tls').rootCertificates.join('\\n'))"
-
 # Frozen Debian repositories make FFmpeg/Python dependency resolution traceable.
-RUN rm -f /etc/apt/sources.list.d/debian.sources \
+RUN node -e "const fs=require('node:fs'); \
+      fs.mkdirSync('/etc/ssl/certs',{recursive:true}); \
+      fs.writeFileSync('/etc/ssl/certs/ca-certificates.crt', \
+        require('node:tls').rootCertificates.join(String.fromCharCode(10)));" \
+    && rm -f /etc/apt/sources.list.d/debian.sources \
     && printf '%s\n' \
       'deb [check-valid-until=no] https://snapshot.debian.org/archive/debian/20261020T000000Z bookworm main' \
       'deb [check-valid-until=no] https://snapshot.debian.org/archive/debian-security/20261020T000000Z bookworm-security main' \
