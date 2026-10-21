@@ -78,6 +78,7 @@ let currentLocale = "en";
 let activeJobId = null;
 let activeJobStatus = null;
 let latestCompletedItems = [];
+let latestProgressJob = null;
 
 function isCancellableStatus(status) {
   return status === "queued" || status === "running";
@@ -103,6 +104,7 @@ function applyLocaleToPage() {
   downloadLink.textContent = getLocaleText("downloadFileButton");
   renderItemDownloads(latestCompletedItems);
   document.documentElement.lang = currentLocale;
+  if (latestProgressJob) renderJobProgress(latestProgressJob);
 }
 
 function setLocale(nextLocale) {
@@ -122,6 +124,21 @@ function initLocale() {
 function setStatus(message, mode = "") {
   statusEl.textContent = message;
   statusEl.className = `status ${mode}`.trim();
+}
+
+const stageText = {
+  en: {queued: "Queued", starting: "Starting", preparing: "Preparing", running: "Downloading", packaging: "Building ZIP", completed: "Completed", "item-failed": "Item failed", failed: "Failed", cancelled: "Cancelled"},
+  "zh-Hant": {queued: "排隊中", starting: "啟動中", preparing: "準備中", running: "下載中", packaging: "建立 ZIP 中", completed: "已完成", "item-failed": "項目失敗", failed: "失敗", cancelled: "已取消"}
+};
+
+function renderJobProgress(job) {
+  latestProgressJob = job;
+  const progress = job.progress || {};
+  const stage = stageText[currentLocale][progress.stage] || getLocaleText("statusPolling");
+  const percent = (value) => Math.max(0, Math.min(100, Number(value) || 0)).toFixed(1);
+  const labels = currentLocale === "zh-Hant" ? ["整體", "目前檔案"] : ["Overall", "Current file"];
+  setStatus(`${stage} (${Number(progress.current) || 0}/${Number(progress.total) || 0}) | ${labels[0]} ${percent(progress.percent)}% | ${labels[1]} ${percent(progress.itemPercent)}%`, "progress");
+  setProgress(progress.percent);
 }
 
 function setProgress(percent) {
@@ -318,24 +335,17 @@ form.addEventListener("submit", async (event) => {
     let currentJob = job;
     activeJobId = currentJob.id;
     activeJobStatus = currentJob.status;
-    setStatus(`${getLocaleText("statusPolling")} ${currentJob.message}`, "progress");
+    renderJobProgress(currentJob);
     setProgress(currentJob.progress?.percent ?? currentJob.progress?.itemPercent ?? 0);
 
     while (currentJob.status === "queued" || currentJob.status === "running") {
       await sleep(1000);
       currentJob = await fetchJobStatus(currentJob.id);
       activeJobStatus = currentJob.status;
-      const overallPercent = currentJob.progress?.percent ?? 0;
-      const itemPercent = currentJob.progress?.itemPercent ?? 0;
-      setProgress(overallPercent);
-      const current = currentJob.progress?.current ?? 0;
-      const total = currentJob.progress?.total ?? 0;
-      setStatus(
-        `${currentJob.message} (${current}/${total}) | 整體 ${overallPercent.toFixed(1)}% | 目前檔案 ${itemPercent.toFixed(1)}%`,
-        "progress"
-      );
+      renderJobProgress(currentJob);
     }
 
+    latestProgressJob = null;
     if (currentJob.status === "failed") {
       throw new Error(currentJob.error || currentJob.message || getLocaleText("statusFailed"));
     }
@@ -357,6 +367,7 @@ form.addEventListener("submit", async (event) => {
     setProgress(100);
     showDownloadAction(downloadUrl, fileName, true);
   } catch (error) {
+    latestProgressJob = null;
     const message = error instanceof Error ? error.message : getLocaleText("statusUnknownError");
     setStatus(message, "err");
     setProgress(0);
