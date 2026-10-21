@@ -22,12 +22,17 @@ afterEach(async () => {
   vi.restoreAllMocks();
   await fs.rm(root, { recursive: true, force: true });
 });
+// Readiness has no independent one-second deadline: Vitest bounds the test.
+// expiresAt is assigned only after processJob has finished artifact cleanup.
+async function finalized(id: string) {
+  while (!getDownloadJob(id).expiresAt) {
+    await new Promise<void>((resolve) => setImmediate(resolve));
+  }
+}
 async function drained(id: string) {
-  await vi.waitFor(async () => {
-    expect(getDownloadJob(id).status).toBe("cancelled");
-    expect(getDownloadJob(id).expiresAt).toBeTruthy();
-    expect(await fs.readdir(root)).toEqual([]);
-  });
+  await finalized(id);
+  expect(getDownloadJob(id).status).toBe("cancelled");
+  expect(await fs.readdir(root)).toEqual([]);
 }
 async function artifact(index: number) {
   const filePath = path.join(root, `media-${index}.mp4`);
@@ -42,7 +47,7 @@ it("preserves a pre-existing directory when exclusive job ownership fails", asyn
   await fs.writeFile(path.join(directory, "unrelated.txt"), "keep me");
   vi.spyOn(crypto, "randomUUID").mockReturnValueOnce(id);
   const job = createDownloadJob({ urls: ["https://youtu.be/a"], formats: ["mp4"] });
-  await vi.waitFor(() => expect(getDownloadJob(job.id).expiresAt).toBeTruthy());
+  await finalized(job.id);
   expect(getDownloadJob(job.id).status).toBe("failed");
   expect(await fs.readFile(path.join(directory, "unrelated.txt"), "utf8")).toBe("keep me");
 });
@@ -61,12 +66,15 @@ it("stops after a partial success, ignores late progress and cleans a late resul
   const second = await artifact(2);
   let release!: (value: typeof first) => void;
   let activeRequest: any;
+  let notifyStarted!: () => void;
+  const started = new Promise<void>((resolve) => { notifyStarted = resolve; });
   mocks.prepareDownload.mockResolvedValueOnce(first).mockImplementationOnce((request) => {
     activeRequest = request;
+    notifyStarted();
     return new Promise((resolve) => { release = resolve; });
   });
   const job = createDownloadJob({ urls: ["https://youtu.be/a", "https://youtu.be/b", "https://youtu.be/c"], formats: ["mp4"] });
-  await vi.waitFor(() => expect(activeRequest).toBeTruthy());
+  await started;
   await cancelDownloadJob(job.id);
   activeRequest.progress("running", "late update", 100);
   expect(getDownloadJob(job.id).progress.stage).toBe("cancelled");
@@ -81,9 +89,11 @@ it("stops after a partial success, ignores late progress and cleans a late resul
 
 it("treats an abort as cancellation rather than an item conversion failure", async () => {
   let rejectItem!: (error: Error) => void;
-  mocks.prepareDownload.mockImplementation(() => new Promise((_resolve, reject) => { rejectItem = reject; }));
+  let notifyStarted!: () => void;
+  const started = new Promise<void>((resolve) => { notifyStarted = resolve; });
+  mocks.prepareDownload.mockImplementation(() => new Promise((_resolve, reject) => { rejectItem = reject; notifyStarted(); }));
   const job = createDownloadJob({ urls: ["https://youtu.be/a", "https://youtu.be/b"], formats: ["mp3", "mp4"] });
-  await vi.waitFor(() => expect(rejectItem).toBeTruthy());
+  await started;
   await cancelDownloadJob(job.id);
   rejectItem(Object.assign(new Error("aborted"), { name: "AbortError" }));
   await drained(job.id);
