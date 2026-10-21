@@ -76,3 +76,9 @@ it('a poll from an older job does not overwrite a newer job progress', async () 
   await new Promise((resolve) => setImmediate(resolve));
   expect(app.elements.get('status').textContent).toContain('Overall 75.0%');
 });
+
+it('retries a failed caption using its exact language and source', () => {
+  const app = page();
+  const result = app.run(`(() => { const original = new FormData(); original.set('subtitleLanguages','en,zh-Hant'); original.set('subtitleSource','automatic'); return JSON.parse(buildRetryData({items:[{url:'a',format:'vtt',subtitleLanguage:'en',subtitleSource:'automatic',status:'completed'},{url:'a',format:'vtt',subtitleLanguage:'zh-Hant',subtitleSource:'automatic',status:'failed'}]},original).get('items')); })()`);
+  expect(result).toEqual([{url:'a',format:'vtt',subtitleLanguage:'zh-Hant',subtitleSource:'automatic'}]);
+});

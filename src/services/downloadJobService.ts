@@ -7,6 +7,7 @@ import archiver from "archiver";
 import { DownloadFormat, DownloadOptions, DownloadSelection, DownloadJobItemSummary, DownloadJobSummary, DownloadResult } from "../types/download";
 import { AppError } from "../utils/errors";
 import { env } from "../config/env";
+import { isSubtitleFormat } from "../utils/downloadOptions";
 import { prepareDownload } from "./downloaderService";
 import { createOwnedTempDirectory } from "./tempDirectoryService";
 
@@ -384,6 +385,8 @@ async function processJob(jobId: string): Promise<void> {
             maxBytes: env.maxJobBytes,
             videoResolution: job.videoResolution,
             audioBitrate: job.audioBitrate,
+            subtitleLanguage: item.subtitleLanguage,
+            subtitleSource: item.subtitleSource,
             signal: job.abortController.signal,
             progress: (stage, detail, stagePercent) => {
               if (job.abortController.signal.aborted) return;
@@ -541,7 +544,9 @@ export function createDownloadJob(input: JobInput): DownloadJobSummary {
   if (activeJobs.size + pendingJobs.length >= env.maxConcurrentJobs + env.maxQueuedJobs) throw new AppError("Download queue is at capacity. Retry later.", 503);
   if (reservedBytes + env.maxJobBytes > env.maxStorageBytes) throw new AppError("Download storage capacity reached. Retry after files expire.", 503);
   const id = crypto.randomUUID();
-  const selections = input.items ?? input.urls.flatMap((url) => input.formats.map((format) => ({ url, format })));
+  const selections = input.items ?? input.urls.flatMap((url) => input.formats.flatMap((format): DownloadSelection[] =>
+    isSubtitleFormat(format) ? (input.subtitleLanguages ?? []).map((language) => ({ url, format, subtitleLanguage: language, subtitleSource: input.subtitleSource ?? "manual" })) : [{ url, format }]));
+  if (selections.length === 0 || selections.length > 60) throw new AppError("Select between 1 and 60 download items, including subtitle languages.", 400);
   const items: DownloadJobItemSummary[] = selections.map((item) => ({ ...item, id: crypto.randomUUID(), status: "pending" }));
   const total = items.length;
   const createdAt = nowIso();

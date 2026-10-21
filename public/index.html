@@ -45,6 +45,8 @@
                 <input type="checkbox" name="format" value="mp4" />
                 <span>MP4</span>
               </label>
+              <label class="format-option"><input type="checkbox" name="format" value="srt" /><span>SRT</span></label>
+              <label class="format-option"><input type="checkbox" name="format" value="vtt" /><span>VTT</span></label>
             </div>
           </div>
 
@@ -62,6 +64,17 @@
               <option value="256">256 kbps</option><option value="320">320 kbps</option>
             </select>
             <p class="helper" data-i18n="qualityHelp">Video uses the best available resolution at or below your selection; unavailable formats fail clearly.</p>
+          </div>
+
+          <div class="field-block quality-controls">
+            <label for="subtitleLanguages" data-i18n="subtitleLanguageLabel">Subtitle languages (comma-separated)</label>
+            <input id="subtitleLanguages" name="subtitleLanguages" value="en" maxlength="180" placeholder="en,zh-Hant" />
+            <label for="subtitleSource" data-i18n="subtitleSourceLabel">Subtitle source</label>
+            <select id="subtitleSource" name="subtitleSource">
+              <option value="manual" data-i18n="subtitleManual">Manual captions</option>
+              <option value="automatic" data-i18n="subtitleAutomatic">Automatic captions</option>
+            </select>
+            <p class="helper" data-i18n="subtitleHelp">Select SRT or VTT for captions. Missing languages fail per item.</p>
           </div>
 
           <div class="field-block">
