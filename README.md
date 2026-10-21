@@ -1,7 +1,7 @@
 # YouTube Downloader
 
-[![TypeScript](https://img.shields.io/badge/TypeScript-5.x-3178C6?logo=typescript&logoColor=white)](https://www.typescriptlang.org/)
-[![Node.js](https://img.shields.io/badge/Node.js-18%2B-3C873A?logo=node.js&logoColor=white)](https://nodejs.org/)
+[![TypeScript](https://img.shields.io/badge/TypeScript-6.x-3178C6?logo=typescript&logoColor=white)](https://www.typescriptlang.org/)
+[![Node.js](https://img.shields.io/badge/Node.js-22%2B-3C873A?logo=node.js&logoColor=white)](https://nodejs.org/)
 [![UI Language](https://img.shields.io/badge/UI-English%20%7C%20%E7%B9%81%E9%AB%94%E4%B8%AD%E6%96%87-orange)](#internationalization)
 [![License](https://img.shields.io/badge/License-MIT-blue.svg)](LICENSE)
 
@@ -16,7 +16,7 @@ This project uses a browser UI plus a Node.js backend that calls `yt-dlp` (with 
 - Clean custom web frontend (no UI framework dependency)
 - No database required
 - Optional `cookies.txt` upload for videos that require authenticated access
-- Temporary files are cleaned up after response
+- Completed files remain available until TTL; cancelled/failed work is cleaned after termination
 
 ## Tech Stack
 
@@ -30,30 +30,41 @@ This project uses a browser UI plus a Node.js backend that calls `yt-dlp` (with 
 
 Install the following tools on your machine:
 
-1. Node.js 18+
-2. yt-dlp
+1. Node.js 22+ (Node.js 22 and 24 are tested; `.nvmrc` selects 22)
+2. Current yt-dlp with EJS challenge scripts (verified with `2026.08.19`)
 3. ffmpeg and ffprobe (required for both formats)
 
 Example setup on Ubuntu/Debian:
 
 ```bash
 sudo apt update
-sudo apt install -y ffmpeg
+sudo apt install -y ffmpeg python3
 sudo curl -L https://github.com/yt-dlp/yt-dlp/releases/latest/download/yt-dlp \
   -o /usr/local/bin/yt-dlp
 sudo chmod a+rx /usr/local/bin/yt-dlp
 ```
 
+Install Node.js 22 or 24 before running the app. The Unix `yt-dlp` executable
+above needs Python 3.10+; the official standalone platform executables bundle
+Python. The app explicitly uses its own Node binary for yt-dlp's JS runtime.
+Official yt-dlp executables bundle EJS. If installing with pip/pipx, use the
+`default` dependency group (`pipx install "yt-dlp[default]"`) so the matching
+`yt-dlp-ejs` package is installed. Third-party packages may omit it.
+See the [upstream EJS installation guide](https://github.com/yt-dlp/yt-dlp/wiki/EJS).
+Keep yt-dlp/EJS current when YouTube changes its challenges.
+
 The app uses a complete executable `ffmpeg`/`ffprobe` pair in `tools/bin/`
 (`.exe` on Windows) when present. Otherwise it uses both tools from `PATH`.
-An incomplete local pair is ignored, and MP3 dependency checks use the same pair
+An incomplete local pair is ignored, and both-format dependency checks use the same pair
 as yt-dlp. yt-dlp itself can also be placed in `tools/bin/`.
 
 ## Quick Start
 
 ```bash
-npm install
+npm ci --ignore-scripts
 cp .env.template .env
+npm run build
+npm run doctor
 npm run dev
 ```
 
@@ -167,6 +178,7 @@ Behavior:
 npm run dev       # Start development server (tsx watch)
 npm run build     # Compile TypeScript to dist/
 npm run start     # Run compiled server
+npm run doctor    # Offline dependency/storage checks (run build first)
 npm run typecheck # Type-check only
 npm test          # Run tests in tests/
 ```
@@ -183,10 +195,10 @@ npm run build
 npm test
 ```
 
-Tests replace external downloader processes with deterministic fixtures. They cover
-successful and failed downloads, temporary-file cleanup, batch progress, and ZIP
-extraction without making requests to YouTube. Cancellation and output validation
-regressions are added alongside their fixes.
+Tests use deterministic fixtures for external downloader behavior and real local
+processes for cancellation-tree checks. They cover cleanup, output/container
+validation, ZIP extraction, cancellation races, overload, storage/time budgets
+and rate limits without making requests to YouTube.
 
 ## Deployment Notes
 
@@ -232,31 +244,36 @@ private and protect the API when exposing the service.
 
 ## Troubleshooting
 
-1. `yt-dlp is not available`
-Install `yt-dlp` and ensure it is available in `PATH`.
+Start with `npm run build && npm run doctor`. It exits nonzero for missing tools,
+unsupported Node.js, obsolete yt-dlp flags or unwritable/insufficient temporary
+storage. It uses the same local-pair/PATH resolution as downloads and makes no
+requests to YouTube. A successful check does not prove current account access
+or challenge compatibility.
 
-2. `ffmpeg is required for mp3 downloads`
-Install `ffmpeg` and retry.
+- **Node.js below 22:** switch to 22 or 24, then rerun `npm ci --ignore-scripts`.
+- **yt-dlp missing or flags unrecognized:** update the actual binary reported by
+  `doctor`; a stale `tools/bin/yt-dlp` takes precedence over PATH.
+- **FFmpeg/ffprobe missing:** install both binaries, then rerun `doctor`. If only
+  one exists under `tools/bin/`, the app uses the PATH pair instead.
+- **EJS/challenge errors:** use an up-to-date official executable or reinstall
+  `yt-dlp[default]` including its matching solver package. Check the upstream
+  EJS guide before changing cookies.
+- **Sign-in verification:** provide Netscape-format `cookies.txt` exported from
+  your authorized account, or configure `YTDLP_COOKIES_FROM_BROWSER`. A browser's
+  `document.cookie` value is not a Netscape cookies file and misses HttpOnly data.
+- **MP4 verification/remux failure:** update FFmpeg/ffprobe and try another source
+  or MP3. Unsupported codecs produce an item failure; the app does not recode.
+- **429/503:** honor `Retry-After`; wait for jobs or retained artifacts to expire.
+  Review configured budgets before increasing concurrency or storage limits.
 
-3. `YouTube requested sign-in verification from this server`
-This can happen even for public videos (anti-bot challenge). Retry with a valid `cookies.txt` from an authorized account.
+## Verification checklist
 
-How to get `cookies.txt` (recommended):
-- Install browser extension `Get cookies.txt LOCALLY`.
-- Open `https://www.youtube.com` while logged in.
-- Use the extension to export `cookies.txt` in Netscape format.
-- Upload that file in the page and retry.
-
-Quick console snippet (debug only, often incomplete because HttpOnly cookies are not accessible):
-
-```js
-copy(document.cookie)
-```
-
-If this snippet returns only a few fields or fails to work, use the extension method above.
-
-4. Build succeeds but download fails at runtime
-Verify `yt-dlp --version` and `ffmpeg -version` on the server host.
+1. `node --version` is 22+ and matches the intended host runtime.
+2. `npm ci --ignore-scripts`, `npm run typecheck`, `npm run build`, `npm test` pass.
+3. `npm run doctor` reports executable yt-dlp/FFmpeg/ffprobe and writable storage.
+4. `npm start` serves `GET /api/health` at `http://127.0.0.1:3000` with `{"ok":true}`.
+5. Check one authorized download on the target host to confirm current YouTube
+   access; automated tests intentionally do not depend on YouTube availability.
 
 ## License
 

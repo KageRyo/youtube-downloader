@@ -1,9 +1,10 @@
 import path from "node:path";
 import fs from "node:fs/promises";
-import fsNative, { existsSync } from "node:fs";
+import { existsSync } from "node:fs";
 
 import { env } from "../config/env";
 import { DownloadRequest, DownloadResult } from "../types/download";
+import { getFfmpegLocation } from "../utils/ffmpeg";
 import { AppError } from "../utils/errors";
 import { sanitizeFileName } from "../utils/files";
 import { isCommandAvailable, runCommand } from "../utils/process";
@@ -44,19 +45,6 @@ function pickProducedFilePath(stdout: string): string | null {
 
 function getDownloadFileName(filePath: string): string {
   return sanitizeFileName(path.basename(filePath));
-}
-
-function getFfmpegLocation(): string | undefined {
-  const directory = path.resolve(process.cwd(), "tools", "bin");
-  const suffix = process.platform === "win32" ? ".exe" : "";
-  try {
-    for (const tool of ["ffmpeg", "ffprobe"]) {
-      fsNative.accessSync(path.join(directory, `${tool}${suffix}`), fsNative.constants.X_OK);
-    }
-    return directory;
-  } catch {
-    return undefined;
-  }
 }
 
 function logDownload(message: string): void {

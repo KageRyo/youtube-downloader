@@ -9,7 +9,8 @@
     "start": "node dist/server.js",
     "typecheck": "tsc --noEmit",
     "test": "vitest run",
-    "test:watch": "vitest"
+    "test:watch": "vitest",
+    "doctor": "node dist/doctor.js"
   },
   "keywords": [],
   "author": "",
@@ -30,5 +31,8 @@
     "tsx": "^4.21.0",
     "typescript": "^6.0.3",
     "vitest": "^3.2.4"
+  },
+  "engines": {
+    "node": ">=22"
   }
 }
