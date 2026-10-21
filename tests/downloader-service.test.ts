@@ -2,6 +2,7 @@ import { EventEmitter } from "node:events";
 import fs from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
+import fsSync from "node:fs";
 import { PassThrough } from "node:stream";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
@@ -58,6 +59,46 @@ describe("prepareDownload temporary directory lifecycle", () => {
     vi.useRealTimers();
     vi.restoreAllMocks();
     await fs.rm(tempRoot, { recursive: true, force: true });
+  });
+
+  it.each(["PATH", "local", "partial local"])("uses a consistent FFmpeg pair from %s", async (location) => {
+    const localDir = path.resolve("tools/bin");
+    const suffix = process.platform === "win32" ? ".exe" : "";
+    const access = vi.spyOn(fsSync, "accessSync").mockImplementation((target) => {
+      const name = path.basename(String(target));
+      if (location === "PATH" || (location === "partial local" && name.startsWith("ffprobe"))) {
+        throw new Error("ENOENT");
+      }
+    });
+    download = async (child, tempDir) => {
+      const args = mocks.spawn.mock.calls.at(-1)![1] as string[];
+      if (location === "local") {
+        expect(args[args.indexOf("--ffmpeg-location") + 1]).toBe(localDir);
+      } else {
+        expect(args).not.toContain("--ffmpeg-location");
+      }
+      const filePath = path.join(tempDir, "audio.mp3");
+      await fs.writeFile(filePath, "audio");
+      child.stdout.write(`${filePath}\n`);
+      child.emit("close", 0);
+    };
+    const result = await prepareDownload({ ...request, format: "mp3" });
+    const checkedTools = mocks.spawn.mock.calls.filter((call) => call[1].includes("-version")).map((call) => call[0]);
+    expect(checkedTools).toEqual(location === "local"
+      ? [path.join(localDir, `ffmpeg${suffix}`), path.join(localDir, `ffprobe${suffix}`)]
+      : ["ffmpeg", "ffprobe"]);
+    access.mockRestore();
+    await result.cleanup();
+  });
+
+  it("rejects a missing ffprobe before creating download files", async () => {
+    mocks.spawn.mockImplementation((command: string) => {
+      const child = new FakeChild();
+      queueMicrotask(() => child.emit("close", path.basename(command).startsWith("ffprobe") ? 1 : 0));
+      return child;
+    });
+    await expect(prepareDownload({ ...request, format: "mp3" })).rejects.toThrow(/ffprobe/);
+    expect(await fs.readdir(tempRoot)).toEqual([]);
   });
 
   it("removes partial files after a spawn error and preserves the error", async () => {

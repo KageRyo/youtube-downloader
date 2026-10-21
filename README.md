@@ -32,7 +32,7 @@ Install the following tools on your machine:
 
 1. Node.js 18+
 2. yt-dlp
-3. ffmpeg (required for mp3 output)
+3. ffmpeg and ffprobe (required for mp3 output)
 
 Example setup on Ubuntu/Debian:
 
@@ -43,6 +43,11 @@ sudo curl -L https://github.com/yt-dlp/yt-dlp/releases/latest/download/yt-dlp \
   -o /usr/local/bin/yt-dlp
 sudo chmod a+rx /usr/local/bin/yt-dlp
 ```
+
+The app uses a complete executable `ffmpeg`/`ffprobe` pair in `tools/bin/`
+(`.exe` on Windows) when present. Otherwise it uses both tools from `PATH`.
+An incomplete local pair is ignored, and MP3 dependency checks use the same pair
+as yt-dlp. yt-dlp itself can also be placed in `tools/bin/`.
 
 ## Quick Start
 
