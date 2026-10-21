@@ -7,7 +7,7 @@
 
 A lightweight web application for downloading YouTube videos as mp3 or mp4.
 
-This project uses a browser UI plus a Node.js backend that calls `yt-dlp` (and `ffmpeg` for mp3 conversion).
+This project uses a browser UI plus a Node.js backend that calls `yt-dlp` (with `ffmpeg` and `ffprobe` for conversion, merging and verification).
 
 ## Features
 
@@ -32,7 +32,7 @@ Install the following tools on your machine:
 
 1. Node.js 18+
 2. yt-dlp
-3. ffmpeg and ffprobe (required for mp3 output)
+3. ffmpeg and ffprobe (required for both formats)
 
 Example setup on Ubuntu/Debian:
 
@@ -71,6 +71,15 @@ Environment variables are loaded from `.env`.
 | `YTDLP_COOKIES_FROM_BROWSER` | No | unset | Automatic fallback for YouTube sign-in challenge, e.g. `chrome` or `firefox:default` |
 
 Reference template: `.env.template`
+
+## Output formats
+
+MP4 downloads prefer H.264/AAC streams, merge into MP4 and remux single-stream
+fallbacks into MP4. The final extension, container brand and video stream are
+verified with ffprobe. If the source codecs cannot be remuxed, the item fails
+with an error; the app does not silently return WebM/MKV or spend CPU transcoding.
+The best available resolution may use codecs unsupported by older players.
+MP3 keeps its existing highest-quality VBR conversion policy.
 
 ## Internationalization
 

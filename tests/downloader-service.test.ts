@@ -28,12 +28,14 @@ class FakeChild extends EventEmitter {
 
 const request = { url: "https://youtu.be/test", format: "mp4" as const };
 let tempRoot: string;
+let probeOutput: string;
 let download: (child: FakeChild, tempDir: string) => void | Promise<void>;
 
 describe("prepareDownload temporary directory lifecycle", () => {
   beforeEach(async () => {
     tempRoot = await fs.mkdtemp(path.join(os.tmpdir(), "ytdl-prepare-test-"));
     env.tempRoot = tempRoot;
+    probeOutput = JSON.stringify({ format: { format_name: "mov,mp4,m4a,3gp,3g2,mj2", tags: { major_brand: "isom" } }, streams: [{ codec_type: "video" }] });
     env.ytDlpCookiesFromBrowser = undefined;
     vi.useFakeTimers();
     mocks.spawn.mockReset();
@@ -42,6 +44,11 @@ describe("prepareDownload temporary directory lifecycle", () => {
       queueMicrotask(async () => {
         try {
           if (args.includes("--version") || args.includes("-version")) {
+            child.emit("close", 0);
+            return;
+          }
+          if (args.includes("-show_entries")) {
+            child.stdout.write(probeOutput);
             child.emit("close", 0);
             return;
           }
@@ -92,14 +99,69 @@ describe("prepareDownload temporary directory lifecycle", () => {
     await result.cleanup();
   });
 
-  it("rejects a missing ffprobe before creating download files", async () => {
+  it.each(["mp3", "mp4"] as const)("rejects a missing ffprobe before creating %s download files", async (format) => {
     mocks.spawn.mockImplementation((command: string) => {
       const child = new FakeChild();
       queueMicrotask(() => child.emit("close", path.basename(command).startsWith("ffprobe") ? 1 : 0));
       return child;
     });
-    await expect(prepareDownload({ ...request, format: "mp3" })).rejects.toThrow(/ffprobe/);
+    await expect(prepareDownload({ ...request, format })).rejects.toThrow(/ffprobe/);
     expect(await fs.readdir(tempRoot)).toEqual([]);
+  });
+
+  it.each(["video.webm", "video.mkv", "video.mp4.part"])("rejects unexpected output %s instead of serving it as MP4", async (name) => {
+    download = async (child, tempDir) => {
+      const filePath = path.join(tempDir, name);
+      await fs.writeFile(filePath, "media");
+      child.stdout.write(`${filePath}\n`);
+      child.emit("close", 0);
+    };
+    await expect(prepareDownload(request)).rejects.toThrow(/MP4|mp4/);
+    expect(await fs.readdir(tempRoot)).toEqual([]);
+  });
+
+  it.each([
+    { format: { format_name: "matroska,webm" }, streams: [{ codec_type: "video" }] },
+    { format: { format_name: "mov,mp4,m4a,3gp,3g2,mj2", tags: { major_brand: "qt  " } }, streams: [{ codec_type: "video" }] },
+    { format: { format_name: "mov,mp4,m4a,3gp,3g2,mj2", tags: { major_brand: "isom" } }, streams: [{ codec_type: "audio" }] }
+  ])("rejects renamed or video-less MP4 output", async (probe) => {
+    probeOutput = JSON.stringify(probe);
+    download = async (child, tempDir) => {
+      const filePath = path.join(tempDir, "video.mp4");
+      await fs.writeFile(filePath, "media");
+      child.stdout.write(`${filePath}\n`);
+      child.emit("close", 0);
+    };
+    await expect(prepareDownload(request)).rejects.toThrow(/MP4/);
+    expect(await fs.readdir(tempRoot)).toEqual([]);
+  });
+
+  it("rejects invalid ffprobe output and cleans the media file", async () => {
+    probeOutput = "not JSON";
+    download = async (child, tempDir) => {
+      const filePath = path.join(tempDir, "video.mp4");
+      await fs.writeFile(filePath, "media");
+      child.stdout.write(`${filePath}\n`);
+      child.emit("close", 0);
+    };
+    await expect(prepareDownload(request)).rejects.toThrow(/MP4 container verification failed/);
+    expect(await fs.readdir(tempRoot)).toEqual([]);
+  });
+
+  it("requests MP4 merge/remux without recoding and verifies the produced video", async () => {
+    download = async (child, tempDir) => {
+      const args = mocks.spawn.mock.calls.find((call) => call[1].includes("-o"))![1] as string[];
+      expect(args[args.indexOf("--merge-output-format") + 1]).toBe("mp4");
+      expect(args[args.indexOf("--remux-video") + 1]).toBe("mp4");
+      expect(args).not.toContain("--recode-video");
+      const filePath = path.join(tempDir, "video.mp4");
+      await fs.writeFile(filePath, "media");
+      child.stdout.write(`${filePath}\n`);
+      child.emit("close", 0);
+    };
+    const result = await prepareDownload(request);
+    expect(result.downloadName).toBe("video.mp4");
+    await result.cleanup();
   });
 
   it("removes partial files after a spawn error and preserves the error", async () => {
