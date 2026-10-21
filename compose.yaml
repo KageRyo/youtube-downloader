@@ -1,0 +1,30 @@
+services:
+  app:
+    build: .
+    ports:
+      - "127.0.0.1:${APP_PORT:-3000}:3000"
+    environment:
+      HOST: 0.0.0.0
+      MAX_CONCURRENT_JOBS: "1"
+      MAX_QUEUED_JOBS: "2"
+      MAX_RETAINED_JOBS: "8"
+      MAX_JOB_BYTES: "134217728"
+      MAX_STORAGE_BYTES: "536870912"
+      JOB_TIMEOUT_MS: "600000"
+    init: true
+    read_only: true
+    tmpfs:
+      - /tmp:size=768m,mode=1777
+    cap_drop:
+      - ALL
+    security_opt:
+      - no-new-privileges:true
+    cpus: 2.0
+    mem_limit: 2g
+    pids_limit: 128
+    stop_grace_period: 30s
+    logging:
+      driver: json-file
+      options:
+        max-size: "10m"
+        max-file: "3"
