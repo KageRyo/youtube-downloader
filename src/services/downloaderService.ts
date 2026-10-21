@@ -107,7 +107,7 @@ export async function prepareDownload(request: DownloadRequest): Promise<Downloa
   await fs.mkdir(tempRoot, { recursive: true });
   const tempDir = await fs.mkdtemp(path.join(tempRoot, "item-"));
   try {
-    logDownload(`starting job url=${request.url} format=${request.format} tempDir=${tempDir}`);
+    logDownload(`starting job format=${request.format}`);
 
     const outputTemplate = path.join(tempDir, "%(title).160B.%(ext)s");
     const baseArgs = [
@@ -139,7 +139,7 @@ export async function prepareDownload(request: DownloadRequest): Promise<Downloa
 
     baseArgs.push(request.url);
 
-    logDownload(`running yt-dlp with ffmpeg=${ffmpegLocation ?? "PATH"}`);
+    logDownload(`running yt-dlp with ffmpeg=${ffmpegLocation ? "local" : "PATH"}`);
 
     request.progress?.("running", "starting yt-dlp", 10);
 
@@ -154,7 +154,7 @@ export async function prepareDownload(request: DownloadRequest): Promise<Downloa
 
       const detail = sawProgressLine ? "downloading media" : "resolving metadata and formats";
       console.log(`[HEARTBEAT] ${lastReportedPercent.toFixed(1)}% - ${detail}`);
-      logDownload(`heartbeat url=${request.url} format=${request.format} detail=${detail} progress=${lastReportedPercent.toFixed(1)}%`);
+      logDownload(`heartbeat format=${request.format} stage=${detail} progress=${lastReportedPercent.toFixed(1)}%`);
       request.progress("running", detail, lastReportedPercent);
     }, 1500);
 
@@ -178,7 +178,7 @@ export async function prepareDownload(request: DownloadRequest): Promise<Downloa
     const consumeProgressChunk = (chunk: string): void => {
       progressBuffer += chunk.replace(/\r/g, "\n");
       const lines = progressBuffer.split("\n");
-      progressBuffer = lines.pop() ?? "";
+      progressBuffer = (lines.pop() ?? "").slice(-8192);
 
       for (const line of lines) {
         if (line.trim().length === 0) {
@@ -190,7 +190,7 @@ export async function prepareDownload(request: DownloadRequest): Promise<Downloa
 
     const runYtDlp = async (args: string[]) =>
       runCommand("yt-dlp", args, {
-        emitOutput: true,
+        emitOutput: false,
         logPrefix: "yt-dlp",
         onStdout: consumeProgressChunk,
         onStderr: consumeProgressChunk,
@@ -209,7 +209,7 @@ export async function prepareDownload(request: DownloadRequest): Promise<Downloa
 
       if (shouldRetryWithBrowserCookies) {
         const browserSpec = env.ytDlpCookiesFromBrowser as string;
-        logDownload(`retrying with --cookies-from-browser ${browserSpec}`);
+        logDownload("retrying with configured browser cookies");
         request.progress?.("running", "retrying with browser cookies", Math.max(lastReportedPercent, 15));
         result = await runYtDlp(["--cookies-from-browser", browserSpec, ...baseArgs]);
       }
@@ -222,7 +222,7 @@ export async function prepareDownload(request: DownloadRequest): Promise<Downloa
     }
 
     if (result.code !== 0) {
-      logDownload(`job failed url=${request.url} format=${request.format} exitCode=${result.code}`);
+      logDownload(`job failed format=${request.format} exitCode=${result.code}`);
       const stderr = result.stderr.trim();
 
       if (isAccessRestrictedError(stderr)) {
@@ -287,13 +287,13 @@ export async function prepareDownload(request: DownloadRequest): Promise<Downloa
     }
     const downloadName = getDownloadFileName(filePath);
     request.progress?.("completed", downloadName, 100);
-    logDownload(`job completed url=${request.url} format=${request.format} file=${downloadName}`);
+    logDownload(`job completed format=${request.format}`);
 
     return {
       filePath,
       downloadName,
       cleanup: async () => {
-        logDownload(`cleaning up tempDir=${tempDir}`);
+        logDownload("cleaning up item artifacts");
         await fs.rm(tempDir, { recursive: true, force: true });
       }
     };

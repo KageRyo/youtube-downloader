@@ -1,6 +1,7 @@
 import { spawn } from "node:child_process";
 import fs from "node:fs";
 import path from "node:path";
+import { StringDecoder } from "node:string_decoder";
 
 interface CommandResult {
   code: number;
@@ -29,6 +30,19 @@ function resolveExecutable(command: string): string {
   }
 
   return command;
+}
+
+const OUTPUT_TAIL_BYTES = 64 * 1024;
+
+function appendTail(previous: Buffer, chunk: Buffer): Buffer {
+  if (chunk.length >= OUTPUT_TAIL_BYTES) return Buffer.from(chunk.subarray(-OUTPUT_TAIL_BYTES));
+  return Buffer.concat([previous.subarray(Math.max(0, previous.length + chunk.length - OUTPUT_TAIL_BYTES)), chunk]);
+}
+
+function decodeTail(bytes: Buffer): string {
+  let start = 0;
+  while (start < bytes.length && (bytes[start] & 0xc0) === 0x80) start += 1;
+  return bytes.toString("utf8", start);
 }
 
 function writePrefixedLine(stream: NodeJS.WriteStream, prefix: string, chunk: string): void {
@@ -121,12 +135,14 @@ export function runCommand(
     // Abort may have happened while spawn was being called.
     if (options.signal?.aborted) handleAbort();
 
-    let stdout = "";
-    let stderr = "";
+    let stdout: Buffer = Buffer.alloc(0);
+    let stderr: Buffer = Buffer.alloc(0);
+    const stdoutDecoder = new StringDecoder("utf8");
+    const stderrDecoder = new StringDecoder("utf8");
 
     child.stdout.on("data", (chunk: Buffer) => {
-      const text = chunk.toString();
-      stdout += text;
+      const text = stdoutDecoder.write(chunk);
+      stdout = appendTail(stdout, chunk);
       options.onStdout?.(text);
 
       if (shouldEmitOutput) {
@@ -135,8 +151,8 @@ export function runCommand(
     });
 
     child.stderr.on("data", (chunk: Buffer) => {
-      const text = chunk.toString();
-      stderr += text;
+      const text = stderrDecoder.write(chunk);
+      stderr = appendTail(stderr, chunk);
       options.onStderr?.(text);
 
       if (shouldEmitOutput) {
@@ -158,7 +174,7 @@ export function runCommand(
       if (settled) return;
       settled = true;
       cleanup();
-      resolve({ code: code ?? 1, stdout, stderr });
+      resolve({ code: code ?? 1, stdout: decodeTail(stdout), stderr: decodeTail(stderr) });
     });
   });
 }

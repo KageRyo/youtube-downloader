@@ -223,6 +223,13 @@ owns that temp root.
 - For private/member/age-restricted videos, you must use a valid account with legitimate access.
 - Treat `cookies.txt` as sensitive data. Do not commit it, share it publicly, or store it long-term.
 
+Process capture retains only the last 64 KiB per stdout/stderr stream while
+progress is processed continuously. Unterminated progress lines are bounded too.
+Server logs include job IDs, formats, stages and exit codes; they omit input URLs,
+cookie paths/browser profiles and raw yt-dlp output. Error responses and a job's
+`failed-list.txt` still contain diagnostics for that request; treat job links as
+private and protect the API when exposing the service.
+
 ## Troubleshooting
 
 1. `yt-dlp is not available`
