@@ -167,7 +167,10 @@ describe("prepareDownload temporary directory lifecycle", () => {
   it.each([{ format: "mp4" as const, videoResolution: 720 }, { format: "mp3" as const, audioBitrate: 192 }])("maps quality choices to safe yt-dlp flags", async (options) => {
     download = async (child, tempDir) => {
       const args = mocks.spawn.mock.calls.find((call) => call[1].includes("-o"))![1] as string[];
-      if (options.format === "mp4") expect(args[args.indexOf("-f") + 1]).toBe("bv*[height<=720]+ba/b[height<=720]");
+      if (options.format === "mp4") {
+        expect(args[args.indexOf("-f") + 1]).toBe("bv*[height<=720]+ba/b[height<=720]");
+        expect(args[args.indexOf("-S") + 1]).toBe("res,vcodec:h264,acodec:aac");
+      }
       else expect(args[args.indexOf("--audio-quality") + 1]).toBe("192K");
       const filePath = path.join(tempDir, `media.${options.format}`);
       await fs.writeFile(filePath, "media"); child.stdout.write(`${filePath}\n`); child.emit("close", 0);
