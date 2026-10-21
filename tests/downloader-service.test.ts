@@ -179,6 +179,39 @@ describe("prepareDownload temporary directory lifecycle", () => {
     await result.cleanup();
   });
 
+  it.each(["srt", "vtt"] as const)("downloads only requested %s captions without media", async (format) => {
+    download = async (child, tempDir) => {
+      const args = mocks.spawn.mock.calls.find((call) => call[1].includes("-o"))![1] as string[];
+      expect(args).toContain("--skip-download");
+      expect(args).toContain("--write-subs");
+      expect(args[args.indexOf("--sub-langs") + 1]).toBe("en");
+      expect(args[args.indexOf("--convert-subs") + 1]).toBe(format);
+      const content = format === "srt" ? "1\n00:00:00,000 --> 00:00:01,000\nHello\n" : "WEBVTT\n\n00:00.000 --> 00:01.000\nHello\n";
+      await fs.writeFile(path.join(tempDir, `video.en.${format}`), content);
+      child.emit("close", 0);
+    };
+    const result = await prepareDownload({ ...request, format, subtitleLanguage: "en", subtitleSource: "manual" });
+    expect(result.downloadName).toBe(`video.en.${format}`);
+    expect(await fs.readdir(path.dirname(result.filePath))).toEqual([`video.en.${format}`]);
+    await result.cleanup();
+  });
+
+  it("selects automatic captions explicitly and reports missing language output", async () => {
+    download = (child) => {
+      const args = mocks.spawn.mock.calls.find((call) => call[1].includes("-o"))![1] as string[];
+      expect(args).toContain("--write-auto-subs"); expect(args).toContain("--no-write-subs");
+      child.emit("close", 0);
+    };
+    await expect(prepareDownload({ ...request, format: "vtt", subtitleLanguage: "zh-Hant", subtitleSource: "automatic" })).rejects.toThrow(/zh-Hant.*subtitles|subtitles.*zh-Hant/);
+    expect(await fs.readdir(tempRoot)).toEqual([]);
+  });
+
+  it("rejects caption output without valid cues", async () => {
+    download = async (child, tempDir) => { await fs.writeFile(path.join(tempDir, "video.en.srt"), "not a subtitle"); child.emit("close", 0); };
+    await expect(prepareDownload({ ...request, format: "srt", subtitleLanguage: "en" })).rejects.toThrow(/subtitle|caption/i);
+    expect(await fs.readdir(tempRoot)).toEqual([]);
+  });
+
   it("does not log input URLs, raw tool diagnostics, browser profiles or cookie paths", async () => {
     const logs = vi.spyOn(console, "log").mockImplementation(() => {});
     const writes = vi.spyOn(process.stderr, "write");

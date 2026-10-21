@@ -62,7 +62,12 @@ const i18n = {
   }
 };
 
-const qualityI18n = {
+const optionI18n = {
+  subtitleLanguageLabel: { en: "Subtitle languages (comma-separated)", "zh-Hant": "字幕語言（以逗號分隔）" },
+  subtitleSourceLabel: { en: "Subtitle source", "zh-Hant": "字幕來源" },
+  subtitleManual: { en: "Manual captions", "zh-Hant": "人工字幕" },
+  subtitleAutomatic: { en: "Automatic captions", "zh-Hant": "自動字幕" },
+  subtitleHelp: { en: "Select SRT or VTT for captions. Use exact tags such as en or zh-Hant (up to 5). Caption-only selections do not download media; missing languages fail per item.", "zh-Hant": "選取 SRT 或 VTT 下載字幕，使用 en、zh-Hant 等語言代碼（最多 5 種）。只選字幕時不下載影片，缺少的語言會逐項顯示失敗。" },
   videoResolutionLabel: { en: "Maximum video resolution", "zh-Hant": "影片解析度上限" },
   audioBitrateLabel: { en: "MP3 bitrate", "zh-Hant": "MP3 位元率" },
   qualityBest: { en: "Best available (default)", "zh-Hant": "最佳可用品質（預設）" },
@@ -80,7 +85,7 @@ function isCancellableStatus(status) {
 }
 
 function getLocaleText(key) {
-  return qualityI18n[key]?.[currentLocale] ?? i18n[currentLocale]?.[key] ?? i18n.en[key] ?? "";
+  return optionI18n[key]?.[currentLocale] ?? i18n[currentLocale]?.[key] ?? i18n.en[key] ?? "";
 }
 
 function applyLocaleToPage() {
@@ -164,8 +169,8 @@ let submitting = false;
 let submissionGeneration = 0;
 
 const taskText = {
-  en: {title: "Download tasks", cancel: "Cancel", retry: "Retry failed items", pending: "Pending", running: "Downloading", completed: "Completed", failed: "Failed", cancelled: "Cancelled", queued: "Queued", expired: "Expired", unavailable: "Connection lost. Check again", check: "Check status", retrySettings: "After a reload, retries use the current form settings. Reselect cookies.txt if needed.", cancelledHint: "Cancellation requested", cancelFailed: "Could not cancel. Please try again.", partial: "Completed with failed items", forget: "Dismiss"},
-  "zh-Hant": {title: "下載任務", cancel: "取消", retry: "重試失敗項目", pending: "等待中", running: "下載中", completed: "已完成", failed: "失敗", cancelled: "已取消", queued: "排隊中", expired: "已過期", unavailable: "連線中斷，請重新查詢", check: "查詢狀態", retrySettings: "重新載入後，重試會使用目前表單設定；如有需要，請重新選取 cookies.txt。", cancelledHint: "已請求取消", cancelFailed: "無法取消，請再試一次。", partial: "部分項目下載失敗", forget: "移除"}
+  en: {manual: "manual", automatic: "automatic", title: "Download tasks", cancel: "Cancel", retry: "Retry failed items", pending: "Pending", running: "Downloading", completed: "Completed", failed: "Failed", cancelled: "Cancelled", queued: "Queued", expired: "Expired", unavailable: "Connection lost. Check again", check: "Check status", retrySettings: "After a reload, retries use the current form settings. Reselect cookies.txt if needed.", cancelledHint: "Cancellation requested", cancelFailed: "Could not cancel. Please try again.", partial: "Completed with failed items", forget: "Dismiss"},
+  "zh-Hant": {manual: "人工", automatic: "自動", title: "下載任務", cancel: "取消", retry: "重試失敗項目", pending: "等待中", running: "下載中", completed: "已完成", failed: "失敗", cancelled: "已取消", queued: "排隊中", expired: "已過期", unavailable: "連線中斷，請重新查詢", check: "查詢狀態", retrySettings: "重新載入後，重試會使用目前表單設定；如有需要，請重新選取 cookies.txt。", cancelledHint: "已請求取消", cancelFailed: "無法取消，請再試一次。", partial: "部分項目下載失敗", forget: "移除"}
 };
 function taskLabel(key) { return taskText[currentLocale][key] || key; }
 function persistedJobIds(jobs) {
@@ -181,7 +186,7 @@ function copyFormData(source) {
 }
 function buildRetryData(job, original) {
   const data = copyFormData(original || new FormData(form));
-  const items = (job.items || []).filter((item) => item.status === "failed").map(({ url, format }) => ({ url, format }));
+  const items = (job.items || []).filter((item) => item.status === "failed").map(({ url, format, subtitleLanguage, subtitleSource }) => ({ url, format, ...(subtitleLanguage ? { subtitleLanguage, subtitleSource } : {}) }));
   data.set("items", JSON.stringify(items));
   data.set("urls", [...new Set(items.map((item) => item.url))].join("\n"));
   data.delete("format");
@@ -219,7 +224,7 @@ function renderTaskPanel(jobs) {
     (job.items || []).forEach((item, index) => {
       const row = document.createElement("li");
       const label = document.createElement("span");
-      label.textContent = `${index + 1}. [${item.format?.toUpperCase() || ""}] ${item.downloadName || item.url || ""} — ${taskLabel(item.status)}`;
+      label.textContent = `${index + 1}. [${item.format?.toUpperCase() || ""}${item.subtitleLanguage ? ` ${item.subtitleLanguage} (${taskLabel(item.subtitleSource || "manual")})` : ""}] ${item.downloadName || item.url || ""} — ${taskLabel(item.status)}`;
       row.appendChild(label);
       if (item.error) {
         const error = document.createElement("p");
@@ -345,7 +350,7 @@ form.addEventListener("submit", async (event) => {
   const urls = normalizeUrls(urlsInput.value);
   const data = new FormData(form);
   if (!urls.length) { setStatus(getLocaleText("statusNeedUrl"), "err"); return; }
-  if (!data.getAll("format").some((format) => format === "mp3" || format === "mp4")) { setStatus(getLocaleText("statusNeedFormat"), "err"); return; }
+  if (!data.getAll("format").some((format) => ["mp3", "mp4", "srt", "vtt"].includes(format))) { setStatus(getLocaleText("statusNeedFormat"), "err"); return; }
   data.set("urls", urls.join("\n"));
   submitting = true; submitBtn.disabled = true;
   setStatus(getLocaleText("statusStarting"), "progress");

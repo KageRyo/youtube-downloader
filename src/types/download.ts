@@ -1,4 +1,5 @@
-export type DownloadFormat = "mp3" | "mp4";
+export type DownloadFormat = "mp3" | "mp4" | "srt" | "vtt";
+export type SubtitleSource = "manual" | "automatic";
 
 export type DownloadJobStatus = "queued" | "running" | "completed" | "failed" | "cancelled";
 
@@ -18,11 +19,15 @@ export interface DownloadJobProgress {
 export interface DownloadOptions {
   videoResolution?: number;
   audioBitrate?: number;
+  subtitleLanguages?: string[];
+  subtitleSource?: SubtitleSource;
 }
 
 export interface DownloadSelection {
   url: string;
   format: DownloadFormat;
+  subtitleLanguage?: string;
+  subtitleSource?: SubtitleSource;
 }
 
 export interface DownloadRequest extends DownloadOptions, DownloadSelection {
@@ -41,10 +46,8 @@ export interface DownloadResult {
 
 export type DownloadItemStatus = "pending" | "running" | "completed" | "failed" | "cancelled";
 
-export interface DownloadJobItemSummary {
+export interface DownloadJobItemSummary extends DownloadSelection {
   id: string;
-  url: string;
-  format: DownloadFormat;
   status: DownloadItemStatus;
   downloadName?: string;
   error?: string;

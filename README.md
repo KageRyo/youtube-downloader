@@ -13,7 +13,7 @@ This project uses a browser UI plus a Node.js backend that calls `yt-dlp` (with 
 
 ## Features
 
-- Download format selection: mp3 or mp4
+- Download media as MP3/MP4 or captions as SRT/VTT
 - Batch download support (multiple URLs in one request)
 - Clean custom web frontend (no UI framework dependency)
 - No database required
@@ -125,6 +125,22 @@ cookies. Private/unavailable videos may therefore fail preview even if an
 authenticated download is possible. Thumbnail requests use HTTPS YouTube image
 hosts with query credentials removed and no referrer; other hosts are omitted.
 
+### Subtitle downloads
+
+Select SRT and/or VTT with exact language tags such as `en,zh-Hant` (up to 5),
+and choose **manual** or **automatic** captions. The corresponding API fields are
+`subtitleLanguages` (comma-separated tags) and `subtitleSource` (`manual` by
+default, or `automatic`). Select only subtitle formats to skip media downloads;
+select media formats too to package both kinds in the same collision-safe ZIP.
+
+Each URL/format/language combination is a separate item (maximum 60 total).
+Missing languages or unavailable caption sources yield explicit item failures,
+never empty invented subtitle files or automatic fallback to another source.
+Successful languages remain downloadable alongside the failed-item report.
+Failed-caption retries retain the exact language and source. SRT/VTT conversion
+uses FFmpeg; produced files must have recognizable caption headers/cues. Caption
+quality depends on the source, especially for automatic captions.
+
 ## Internationalization
 
 - Default UI language: English
@@ -175,9 +191,10 @@ src/
 Form fields:
 
 - `urls` (required): one or more YouTube URLs, one per line
-- `format` (required): one or both of `mp3`, `mp4` (repeat field for multiple selections)
+- `format` (required): one or more of `mp3`, `mp4`, `srt`, `vtt` (repeat field for multiple selections)
 - `videoResolution` / `audioBitrate` (optional): quality presets above
-- `items` (optional): JSON array of exact `{url, format}` pairs for retry; when supplied, it replaces the URL/format cross-product (up to 60 items and 30 unique URLs)
+- `subtitleLanguages` / `subtitleSource` (optional): caption options above
+- `items` (optional): JSON array of exact `{url, format, subtitleLanguage?, subtitleSource?}` items for retry; when supplied, it replaces the URL/format cross-product (up to 60 items and 30 unique URLs)
 - `cookiesFile` (optional): `cookies.txt` for authenticated access
 
 Behavior:

@@ -201,3 +201,25 @@ describe("download options", () => {
     await request(createApp()).post("/api/download").field("items", items).expect(400);
   });
 });
+
+describe("subtitle selections", () => {
+  it("accepts explicit caption format/languages/source", async () => {
+    mocks.createDownloadJob.mockReset().mockReturnValue(queuedJob);
+    await request(createApp()).post("/api/download").field("urls", "https://youtu.be/a").field("format", "srt")
+      .field("subtitleLanguages", "en,zh-Hant").field("subtitleSource", "automatic").expect(202);
+    expect(mocks.createDownloadJob.mock.calls[0][0]).toMatchObject({formats:["srt"],subtitleLanguages:["en","zh-Hant"],subtitleSource:"automatic"});
+  });
+  it.each(["all", ".*", "en;--exec", "live_chat", "en,fr,de,es,it,ja"])("rejects unsafe or excessive languages: %s", async (value) => {
+    await request(createApp()).post("/api/download").field("urls", "https://youtu.be/a").field("format", "vtt").field("subtitleLanguages", value).expect(400);
+  });
+  it("requires a language and validates source selection", async () => {
+    await request(createApp()).post("/api/download").field("urls", "https://youtu.be/a").field("format", "srt").expect(400);
+    await request(createApp()).post("/api/download").field("urls", "https://youtu.be/a").field("format", "srt").field("subtitleLanguages", "en").field("subtitleSource", "both").expect(400);
+  });
+  it("preserves the exact failed caption language during retry", async () => {
+    mocks.createDownloadJob.mockReset().mockReturnValue(queuedJob);
+    const items=[{url:"https://youtu.be/a",format:"vtt",subtitleLanguage:"zh-Hant",subtitleSource:"automatic"}];
+    await request(createApp()).post("/api/download").field("items", JSON.stringify(items)).expect(202);
+    expect(mocks.createDownloadJob.mock.calls[0][0].items).toEqual(items);
+  });
+});

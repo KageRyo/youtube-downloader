@@ -6,16 +6,16 @@ import { NextFunction, Request, Response } from "express";
 import { cancelDownloadJob, createDownloadJob, getDownloadJob, getDownloadJobFile, getDownloadJobItemFile } from "../services/downloadJobService";
 import { DownloadFormat } from "../types/download";
 import { env } from "../config/env";
-import { parseDownloadOptions, parseSelections, parseYouTubeUrl } from "../utils/downloadOptions";
+import { parseDownloadOptions, parseSelections, parseYouTubeUrl, isDownloadFormat, isSubtitleFormat } from "../utils/downloadOptions";
 import { AppError } from "../utils/errors";
 import { createOwnedTempDirectory } from "../services/tempDirectoryService";
 
 function parseFormats(value: unknown): DownloadFormat[] {
   const rawValues = Array.isArray(value) ? value : [value];
-  const formats = rawValues.filter((item): item is DownloadFormat => item === "mp3" || item === "mp4");
+  const formats = rawValues.filter(isDownloadFormat);
 
   if (formats.length === 0) {
-    throw new AppError("At least one format must be selected (mp3 or mp4).", 400);
+    throw new AppError("At least one format must be selected (mp3, mp4, srt or vtt).", 400);
   }
 
   return Array.from(new Set(formats));
@@ -85,6 +85,7 @@ export async function createJobHandler(req: Request, res: Response, next: NextFu
     const urls = items ? [...new Set(items.map((item) => item.url))] : parseYouTubeUrls(req.body.url, req.body.urls);
     const formats = items ? [...new Set(items.map((item) => item.format))] : parseFormats(req.body.format);
     const options = parseDownloadOptions(req.body);
+    if (!items && formats.some(isSubtitleFormat) && !options.subtitleLanguages?.length) throw new AppError("Select at least one subtitle language.", 400);
     const cookieFile = await saveCookiesUpload(req.file?.buffer);
 
     try {

@@ -4,6 +4,7 @@ import { existsSync } from "node:fs";
 
 import { env } from "../config/env";
 import { DownloadRequest, DownloadResult } from "../types/download";
+import { isSubtitleFormat } from "../utils/downloadOptions";
 import { getFfmpegLocation } from "../utils/ffmpeg";
 import { AppError } from "../utils/errors";
 import { sanitizeFileName } from "../utils/files";
@@ -89,6 +90,7 @@ async function ensureDependencies(format: DownloadRequest["format"], signal?: Ab
 }
 
 export async function prepareDownload(request: DownloadRequest): Promise<DownloadResult> {
+  if (isSubtitleFormat(request.format) && (!request.subtitleLanguage || !/^[A-Za-z0-9]+(?:-[A-Za-z0-9]+)*$/.test(request.subtitleLanguage))) throw new AppError("Select an exact subtitle language.", 400);
   const ffmpegLocation = await ensureDependencies(request.format, request.signal);
 
   const tempRoot = request.tempRoot ?? env.tempRoot;
@@ -99,6 +101,7 @@ export async function prepareDownload(request: DownloadRequest): Promise<Downloa
 
     const outputTemplate = path.join(tempDir, "%(title).160B.%(ext)s");
     const baseArgs = [
+      "--ignore-config",
       "--no-playlist",
       "--newline",
       "--js-runtimes",
@@ -121,8 +124,13 @@ export async function prepareDownload(request: DownloadRequest): Promise<Downloa
 
     if (request.format === "mp3") {
       baseArgs.push("-x", "--audio-format", "mp3", "--audio-quality", request.audioBitrate ? `${request.audioBitrate}K` : "0");
-    } else {
+    } else if (request.format === "mp4") {
       baseArgs.push("-f", request.videoResolution ? `bv*[height<=${request.videoResolution}]+ba/b[height<=${request.videoResolution}]` : "bv*+ba/b", "--merge-output-format", "mp4", "--remux-video", "mp4", "-S", request.videoResolution ? "res,vcodec:h264,acodec:aac" : "vcodec:h264,acodec:aac");
+    }
+
+    if (isSubtitleFormat(request.format)) {
+      baseArgs.push("--skip-download", "--no-simulate", "--sub-langs", request.subtitleLanguage!, "--sub-format", "vtt/best", "--convert-subs", request.format);
+      baseArgs.push(...(request.subtitleSource === "automatic" ? ["--write-auto-subs", "--no-write-subs"] : ["--write-subs", "--no-write-auto-subs"]));
     }
 
     baseArgs.push(request.url);
@@ -239,7 +247,13 @@ export async function prepareDownload(request: DownloadRequest): Promise<Downloa
 
     request.progress?.("processing", "finalizing output", Math.max(lastReportedPercent, 90));
 
-    let filePath = pickProducedFilePath(result.stdout);
+    let filePath: string | null;
+    if (isSubtitleFormat(request.format)) {
+      const suffix = `.${request.subtitleLanguage}.${request.format}`;
+      const candidates = (await fs.readdir(tempDir)).filter((name) => name.endsWith(suffix));
+      if (candidates.length !== 1) throw new AppError(`No ${request.subtitleSource ?? "manual"} ${request.subtitleLanguage} ${request.format} subtitles are available.`, 400);
+      filePath = path.join(tempDir, candidates[0]);
+    } else filePath = pickProducedFilePath(result.stdout);
     if (!filePath) {
       const files = await fs.readdir(tempDir);
       const firstFile = files.at(0);
@@ -255,6 +269,19 @@ export async function prepareDownload(request: DownloadRequest): Promise<Downloa
     const outputStat = await fs.stat(actualPath);
     if (!relative || relative.startsWith(`..${path.sep}`) || relative === ".." || path.isAbsolute(relative) || !outputStat.isFile() || outputStat.size === 0) {
       throw new AppError("The downloader did not produce a valid media file in its working directory.", 500);
+    }
+    if (isSubtitleFormat(request.format)) {
+      const file = await fs.open(actualPath, "r");
+      let text: string;
+      try {
+        const buffer = Buffer.alloc(64 * 1024);
+        const { bytesRead } = await file.read(buffer, 0, buffer.length, 0);
+        text = buffer.toString("utf8", 0, bytesRead);
+      } finally { await file.close(); }
+      const valid = request.format === "vtt"
+        ? /^(?:\uFEFF)?WEBVTT(?:[ \t].*)?\r?\n/.test(text) && /(?:\d{2}:)?\d{2}:\d{2}\.\d{3} --> (?:\d{2}:)?\d{2}:\d{2}\.\d{3}/.test(text)
+        : /(?:^|\n)\d+\r?\n\d{2,}:\d{2}:\d{2},\d{3} --> \d{2,}:\d{2}:\d{2},\d{3}/.test(text);
+      if (!valid) throw new AppError("Subtitle output has no valid caption cues.", 400);
     }
     if (request.format === "mp4") {
       if (path.extname(filePath).toLowerCase() !== ".mp4") {
