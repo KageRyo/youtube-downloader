@@ -194,7 +194,9 @@ Behavior:
 - Multiple URLs: the job bundles outputs into one zip.
 - Completed files expire automatically after the configured TTL and are removed from disk.
 - Cancellation waits for the downloader process to close before file cleanup. Linux/macOS signal the process group and escalate after 1.5 seconds; Windows terminates the process tree with `taskkill /T /F`.
-- The web client auto-sends job cancellation when the page is closed or navigated away.
+- The web task panel shows every item status, error, and available download. Use **Cancel** to stop a queued/running job. Closing or reloading the page keeps server work running; the same tab recovers jobs from sessionStorage until the server TTL expires. Only opaque job UUIDs are saved, never URLs, titles, cookies, or settings.
+- **Retry failed items** creates a new job with only failed URL-format pairs, keeping successful downloads intact. During the same page session it preserves the original submission settings and cookies file in memory. After reload, choose settings and reselect cookies.txt in the form before retrying. The multipart `items` field is a JSON array of `{ "url": "…", "format": "mp3" | "mp4" }` pairs.
+- 網頁任務面板提供逐項狀態、錯誤、下載、取消與失敗項目重試。關閉或重新載入網頁不會取消伺服器任務；同一分頁會在 TTL 期限內恢復查詢。僅保存任務 UUID，不保存網址、標題、cookies 或設定。重新載入後，重試使用目前表單設定，請視需要重新選取 cookies.txt。
 - If no authentication is required, cookies are not needed.
 - If access is restricted, provide a valid `cookies.txt` from an account that has legal access.
 - If configured, the server will automatically retry with `--cookies-from-browser` when YouTube asks for sign-in verification.
