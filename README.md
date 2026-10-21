@@ -1,20 +1,23 @@
 # YouTube Downloader
 
-Current release: **[v1.1.0](https://github.com/KageRyo/youtube-downloader/releases/tag/v1.1.0)**
+Current release: **[v1.2.0](https://github.com/KageRyo/youtube-downloader/releases/tag/v1.2.0)**
 
 [![TypeScript](https://img.shields.io/badge/TypeScript-6.x-3178C6?logo=typescript&logoColor=white)](https://www.typescriptlang.org/)
 [![Node.js](https://img.shields.io/badge/Node.js-22%2B-3C873A?logo=node.js&logoColor=white)](https://nodejs.org/)
 [![UI Language](https://img.shields.io/badge/UI-English%20%7C%20%E7%B9%81%E9%AB%94%E4%B8%AD%E6%96%87-orange)](#internationalization)
 [![License](https://img.shields.io/badge/License-MIT-blue.svg)](LICENSE)
 
-A lightweight web application for downloading YouTube videos as mp3 or mp4.
+A lightweight web application for downloading YouTube media as MP3/MP4 and captions as SRT/VTT.
 
 This project uses a browser UI plus a Node.js backend that calls `yt-dlp` (with `ffmpeg` and `ffprobe` for conversion, merging and verification).
 
 ## Features
 
 - Download media as MP3/MP4 or captions as SRT/VTT
-- Batch download support (multiple URLs in one request)
+- Select MP4 resolution and MP3 bitrate, and preview video metadata
+- Batch downloads with per-item status, cancellation and failed-item retry
+- Restore active tasks after reloading the same browser tab
+- Docker Compose deployment with bounded resources and localhost defaults
 - Clean custom web frontend (no UI framework dependency)
 - No database required
 - Optional `cookies.txt` upload for videos that require authenticated access
@@ -34,7 +37,7 @@ Install the following tools on your machine:
 
 1. Node.js 22+ (Node.js 22 and 24 are tested; `.nvmrc` selects 22)
 2. Current yt-dlp with EJS challenge scripts (verified with `2026.08.19`)
-3. ffmpeg and ffprobe (required for both formats)
+3. ffmpeg and ffprobe (media processing, verification and caption conversion)
 
 Example setup on Ubuntu/Debian:
 
@@ -57,7 +60,7 @@ Keep yt-dlp/EJS current when YouTube changes its challenges.
 
 The app uses a complete executable `ffmpeg`/`ffprobe` pair in `tools/bin/`
 (`.exe` on Windows) when present. Otherwise it uses both tools from `PATH`.
-An incomplete local pair is ignored, and both-format dependency checks use the same pair
+An incomplete local pair is ignored, and dependency checks use the same pair
 as yt-dlp. yt-dlp itself can also be placed in `tools/bin/`.
 
 ## Quick Start
@@ -190,8 +193,8 @@ src/
 
 Form fields:
 
-- `urls` (required): one or more YouTube URLs, one per line
-- `format` (required): one or more of `mp3`, `mp4`, `srt`, `vtt` (repeat field for multiple selections)
+- `urls` (required unless `items` is supplied): one or more YouTube URLs, one per line
+- `format` (required unless `items` is supplied): one or more of `mp3`, `mp4`, `srt`, `vtt` (repeat field for multiple selections)
 - `videoResolution` / `audioBitrate` (optional): quality presets above
 - `subtitleLanguages` / `subtitleSource` (optional): caption options above
 - `items` (optional): JSON array of exact `{url, format, subtitleLanguage?, subtitleSource?}` items for retry; when supplied, it replaces the URL/format cross-product (up to 60 items and 30 unique URLs)
@@ -206,14 +209,14 @@ Behavior:
 - `GET /api/download/:jobId/file` streams the finished file when the job is complete.
 - `GET /api/download/:jobId/items/:itemId/file` streams one successful item from the job.
 - `POST /api/download/:jobId/cancel` cancels queued/running work. Cancellation is terminal, skips remaining items and removes partial artifacts after process termination; completed artifacts remain available until TTL.
-- Single URL + single format: the job produces one file.
-- Single URL + multiple formats: the job bundles outputs into one zip.
-- Multiple URLs: the job bundles outputs into one zip.
+- One successful output with no failed items produces one file.
+- Multiple successful outputs, or any mix of successful and failed items, produce a ZIP with a report of failed items.
+- If every item fails, the job fails without a downloadable artifact.
 - Completed files expire automatically after the configured TTL and are removed from disk.
 - Cancellation waits for the downloader process to close before file cleanup. Linux/macOS signal the process group and escalate after 1.5 seconds; Windows terminates the process tree with `taskkill /T /F`.
 - The web task panel shows every item status, error, and available download. Use **Cancel** to stop a queued/running job. Closing or reloading the page keeps server work running; the same tab recovers jobs from sessionStorage until the server TTL expires. Only opaque job UUIDs are saved, never URLs, titles, cookies, or settings.
-- **Retry failed items** creates a new job with only failed URL-format pairs, keeping successful downloads intact. During the same page session it preserves the original submission settings and cookies file in memory. After reload, choose settings and reselect cookies.txt in the form before retrying. The multipart `items` field is a JSON array of `{ "url": "…", "format": "mp3" | "mp4" }` pairs.
-- 網頁任務面板提供逐項狀態、錯誤、下載、取消與失敗項目重試。關閉或重新載入網頁不會取消伺服器任務；同一分頁會在 TTL 期限內恢復查詢。僅保存任務 UUID，不保存網址、標題、cookies 或設定。重新載入後，重試使用目前表單設定，請視需要重新選取 cookies.txt。
+- **Retry failed items** creates a new job with only failed output items, keeping successful downloads intact. During the same page session it preserves the original submission settings and cookies file in memory. After reload, choose quality settings and reselect cookies.txt in the form before retrying; caption retries retain their original language and source. The multipart `items` field accepts exact URL/format items; captions also carry their original `subtitleLanguage` and `subtitleSource`.
+- 網頁任務面板提供逐項狀態、錯誤、下載、取消與失敗項目重試。關閉或重新載入網頁不會取消伺服器任務；同一分頁會在 TTL 期限內恢復查詢。僅保存任務 UUID，不保存網址、標題、cookies 或設定。重新載入後，重試使用目前表單的畫質設定，請視需要重新選取 cookies.txt；字幕重試仍保留原語言與字幕來源。
 - If no authentication is required, cookies are not needed.
 - If access is restricted, provide a valid `cookies.txt` from an account that has legal access.
 - If configured, the server will automatically retry with `--cookies-from-browser` when YouTube asks for sign-in verification.
