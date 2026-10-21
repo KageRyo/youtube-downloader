@@ -29,7 +29,7 @@ export interface DownloadResult {
   cleanup: () => Promise<void>;
 }
 
-export type DownloadItemStatus = "pending" | "running" | "completed" | "failed";
+export type DownloadItemStatus = "pending" | "running" | "completed" | "failed" | "cancelled";
 
 export interface DownloadJobItemSummary {
   id: string;
