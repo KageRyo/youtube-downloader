@@ -65,9 +65,17 @@ Environment variables are loaded from `.env`.
 
 | Name | Required | Default | Description |
 | --- | --- | --- | --- |
+| `HOST` | No | `127.0.0.1` | Bind address; public binding is opt-in |
 | `PORT` | No | `3000` | HTTP server port |
 | `DOWNLOADER_TMP_DIR` | No | OS temp directory | Temporary working directory for download jobs |
 | `DOWNLOAD_FILE_TTL_MINUTES` | No | `10` | Retention time for completed download artifacts before auto cleanup |
+| `MAX_CONCURRENT_JOBS` | No | `2` | Running jobs per server process |
+| `MAX_QUEUED_JOBS` | No | `8` | Waiting jobs in addition to running jobs |
+| `MAX_RETAINED_JOBS` | No | `32` | Maximum total job records, including terminal records |
+| `MAX_JOB_BYTES` | No | `536870912` | Per-job working files and ZIP size budget (512 MiB) |
+| `MAX_STORAGE_BYTES` | No | `8589934592` | Storage reservations across accepted jobs (8 GiB) |
+| `JOB_TIMEOUT_MS` | No | `1800000` | Running time budget, including packaging (30 minutes) |
+| `CREATION_RATE_LIMIT` | No | `10` | Download submissions per client per minute |
 | `YTDLP_COOKIES_FROM_BROWSER` | No | unset | Automatic fallback for YouTube sign-in challenge, e.g. `chrome` or `firefox:default` |
 
 Reference template: `.env.template`
@@ -136,7 +144,9 @@ Form fields:
 
 Behavior:
 
-- `POST /api/download` creates a background job and returns `202` with a job summary.
+- `POST /api/download` accepts a running or queued job and returns `202` with its summary.
+- Queue, retained-record or storage capacity returns `503` with `Retry-After: 60`.
+- The creation rate limit returns `429` with `Retry-After`; polling and file downloads remain available.
 - `GET /api/download/:jobId` returns the current job status and real progress.
 - `GET /api/download/:jobId/file` streams the finished file when the job is complete.
 - `GET /api/download/:jobId/items/:itemId/file` streams one successful item from the job.
@@ -185,6 +195,27 @@ This project is not a static-only application.
 - GitHub Pages alone is not enough (it cannot run `yt-dlp` or `ffmpeg`).
 - You need a backend runtime that supports Node.js and system binaries.
 - Typical setup: static frontend + deployed backend API (Render, Railway, Fly.io, VPS, etc.).
+
+The server binds to localhost by default. Set `HOST=0.0.0.0` only when external
+access is intended. Limits apply per server process; use one process per dedicated
+temp root. Each accepted job reserves `MAX_JOB_BYTES` until its files are cleaned,
+including completed files waiting for TTL. Cancelled/failed jobs release their
+reservation after cleanup; cleanup failures retain it and retry after TTL.
+
+The byte budget includes original media and the ZIP copy. It is checked after
+items/packaging and once per second while running; yt-dlp also receives
+`--max-filesize` for known source sizes. Unknown sizes and bytes written between
+checks can temporarily exceed the budget. Cookies are limited to 2 MiB per job.
+Use a dedicated filesystem quota/container storage limit for a hard disk cap,
+and OS/container CPU and memory limits for public deployments.
+
+The rate limiter uses the socket client address and ignores forwarded headers.
+Behind a reverse proxy, clients share the proxy's limit; configure per-user/IP
+rate limits and authentication at that proxy. In-memory limits do not coordinate
+multiple instances. SIGINT/SIGTERM stops admission, aborts queued/running work,
+waits for termination and removes retained artifacts. A hard crash can leave
+orphaned directories (tracked separately in #9); clean them only when no process
+owns that temp root.
 
 ## Security and Access
 

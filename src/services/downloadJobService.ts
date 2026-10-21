@@ -32,13 +32,66 @@ interface InternalJob extends DownloadJobSummary {
   abortController: AbortController;
   cleanupTimer?: NodeJS.Timeout;
   cleanedUp?: boolean;
+  done?: Promise<void>;
+  failure?: Error;
+  reservationReleased?: boolean;
 }
 
 const jobs = new Map<string, InternalJob>();
 const DOWNLOAD_PROGRESS_MAX = 96;
+const pendingJobs: InternalJob[] = [];
+const activeJobs = new Set<InternalJob>();
+let reservedBytes = 0;
+let shuttingDown = false;
+
+function startQueuedJobs(): void {
+  while (!shuttingDown && activeJobs.size < env.maxConcurrentJobs && pendingJobs.length > 0) {
+    const job = pendingJobs.shift()!;
+    activeJobs.add(job);
+    job.done = processJob(job.id).finally(() => {
+      activeJobs.delete(job);
+      startQueuedJobs();
+    });
+  }
+}
+
+async function directoryBytes(directory: string, limit: number): Promise<number> {
+  let total = 0;
+  for (const entry of await fsPromises.readdir(directory, { withFileTypes: true })) {
+    const fullPath = path.join(directory, entry.name);
+    try {
+      if (entry.isDirectory()) total += await directoryBytes(fullPath, limit - total);
+      else if (entry.isFile()) total += (await fsPromises.stat(fullPath)).size;
+    } catch (error) {
+      if ((error as NodeJS.ErrnoException).code !== "ENOENT") throw error;
+    }
+    if (total > limit) return total;
+  }
+  return total;
+}
+
+async function checkJobSize(job: InternalJob): Promise<void> {
+  if (await directoryBytes(job.outputDir, env.maxJobBytes) > env.maxJobBytes) {
+    throw new AppError("Download job exceeded its storage size budget in bytes.", 413);
+  }
+}
+
+function failBudget(job: InternalJob, error: Error): void {
+  if (job.abortController.signal.aborted || job.status !== "running") return;
+  job.failure = error;
+  job.abortController.abort();
+}
+
+export async function shutdownDownloadJobs(): Promise<void> {
+  shuttingDown = true;
+  await Promise.all([...jobs.values()].map((job) => cancelDownloadJob(job.id)));
+  await Promise.all([...jobs.values()].map((job) => job.done));
+  await Promise.all([...jobs.values()].map((job) => cleanupJobArtifacts(job)));
+}
 
 function throwIfCancelled(job: InternalJob): void {
   if (job.abortController.signal.aborted) {
+    if (job.failure) throw job.failure;
     const error = new Error("Download was cancelled.");
     error.name = "AbortError";
     throw error;
@@ -134,29 +187,35 @@ async function cleanupJobArtifacts(job: InternalJob): Promise<void> {
   if (job.cleanedUp) {
     return;
   }
-  job.cleanedUp = true;
-
   if (job.cleanupTimer) {
     clearTimeout(job.cleanupTimer);
     job.cleanupTimer = undefined;
   }
-
+  const failures: unknown[] = [];
   for (const cleanup of job.cleanupPaths) {
-    await cleanup();
+    try { await cleanup(); } catch (error) { failures.push(error); }
   }
-
-  if (job.cookiesFilePath) {
-    const cookieDir = path.dirname(job.cookiesFilePath);
-    await fsPromises.rm(cookieDir, { recursive: true, force: true });
+  for (const directory of [job.outputDir, ...(job.cookiesFilePath ? [path.dirname(job.cookiesFilePath)] : [])]) {
+    try { await fsPromises.rm(directory, { recursive: true, force: true }); } catch (error) { failures.push(error); }
   }
-
-  await fsPromises.rm(job.outputDir, { recursive: true, force: true });
   job.itemArtifacts.clear();
+  if (failures.length > 0) throw new AggregateError(failures, "Could not clean all download artifacts.");
+  job.cleanedUp = true;
+  if (!job.reservationReleased) {
+    job.reservationReleased = true;
+    reservedBytes -= env.maxJobBytes;
+  }
 }
 
 async function cleanupAndDeleteJob(job: InternalJob): Promise<void> {
-  await cleanupJobArtifacts(job).catch(() => undefined);
-  jobs.delete(job.id);
+  try {
+    await cleanupJobArtifacts(job);
+    jobs.delete(job.id);
+  } catch {
+    logJob(job.id, "artifact cleanup failed; retaining storage reservation and retrying after TTL");
+    job.cleanupTimer = setTimeout(() => { void cleanupAndDeleteJob(job); }, env.downloadFileTtlMs);
+    job.cleanupTimer.unref();
+  }
 }
 
 function scheduleJobDeletion(job: InternalJob, reason: string): void {
@@ -169,8 +228,9 @@ function scheduleJobDeletion(job: InternalJob, reason: string): void {
 
   job.cleanupTimer = setTimeout(() => {
     logJob(job.id, `${reason}; removing job record at ${expiresAt}`);
-    jobs.delete(job.id);
+    void cleanupAndDeleteJob(job);
   }, env.downloadFileTtlMs);
+  job.cleanupTimer.unref();
 }
 
 function scheduleJobExpiration(job: InternalJob): void {
@@ -187,6 +247,7 @@ function scheduleJobExpiration(job: InternalJob): void {
     logJob(job.id, `artifact expired at ${expiresAt}, cleaning up`);
     void cleanupAndDeleteJob(job);
   }, env.downloadFileTtlMs);
+  job.cleanupTimer.unref();
 }
 
 async function buildZipArchive(
@@ -265,6 +326,10 @@ async function processJob(jobId: string): Promise<void> {
     return;
   }
 
+  let timeout: NodeJS.Timeout | undefined;
+  let monitor: NodeJS.Timeout | undefined;
+  let checking: Promise<void> | undefined;
+  let monitoring = false;
   try {
     await fsPromises.mkdir(job.outputDir, { recursive: true });
     throwIfCancelled(job);
@@ -273,6 +338,15 @@ async function processJob(jobId: string): Promise<void> {
       message: createProgressMessage(0, job.progress.total, "starting"),
       progress: { current: 0, percent: 0, itemPercent: 0, stage: "starting" }
     });
+
+    timeout = setTimeout(() => failBudget(job, new AppError("Download job exceeded its time limit.", 408)), env.jobTimeoutMs);
+    monitoring = true;
+    monitor = setInterval(() => {
+      if (checking) return;
+      checking = checkJobSize(job).catch((error: Error) => {
+        if (monitoring) failBudget(job, error);
+      }).finally(() => { checking = undefined; });
+    }, 1000);
 
     const results: DownloadResult[] = [];
     const failedItems: FailedItem[] = [];
@@ -307,6 +381,8 @@ async function processJob(jobId: string): Promise<void> {
             url: job.urls[urlIndex],
             format,
             cookiesFilePath: job.cookiesFilePath,
+            tempRoot: job.outputDir,
+            maxBytes: env.maxJobBytes,
             signal: job.abortController.signal,
             progress: (stage, detail, stagePercent) => {
               if (job.abortController.signal.aborted) return;
@@ -324,6 +400,8 @@ async function processJob(jobId: string): Promise<void> {
           });
 
           job.cleanupPaths.push(prepared.cleanup);
+          throwIfCancelled(job);
+          await checkJobSize(job);
           throwIfCancelled(job);
           results.push(prepared);
           job.itemArtifacts.set(item.id, {
@@ -347,6 +425,7 @@ async function processJob(jobId: string): Promise<void> {
             }
           });
         } catch (error) {
+          if (error instanceof AppError && error.statusCode === 413) { job.failure = error; throw error; }
           throwIfCancelled(job);
           if (error instanceof Error && error.name === "AbortError") throw error;
           processed += 1;
@@ -400,6 +479,7 @@ async function processJob(jobId: string): Promise<void> {
       finalArtifact = await buildZipArchive(job, results, failedItems);
     }
 
+    await checkJobSize(job);
     throwIfCancelled(job);
     job.filePath = finalArtifact.filePath;
     job.downloadName = finalArtifact.downloadName;
@@ -417,23 +497,20 @@ async function processJob(jobId: string): Promise<void> {
 
     scheduleJobExpiration(job);
   } catch (error) {
-    const isAbort =
-      job.abortController.signal.aborted ||
-      (error instanceof Error && (error.name === "AbortError" || /aborted/i.test(error.message)));
-    const message =
+    const isAbort = !job.failure && (job.abortController.signal.aborted ||
+      (error instanceof Error && (error.name === "AbortError" || /aborted/i.test(error.message))));
+    const message = job.failure?.message ?? (
       error instanceof Error
         ? error.message
         : isAbort
           ? "Download was cancelled."
-          : "Download failed.";
-    if (isAbort) {
-      for (const item of job.items) {
-        if (item.status !== "failed") item.status = "cancelled";
-        item.downloadName = undefined;
-      }
-      job.downloadName = undefined;
-      job.filePath = undefined;
+          : "Download failed.");
+    for (const item of job.items) {
+      if (item.status !== "failed") item.status = isAbort ? "cancelled" : "failed";
+      item.downloadName = undefined;
     }
+    job.downloadName = undefined;
+    job.filePath = undefined;
     updateJob(job, {
       status: isAbort ? "cancelled" : "failed",
       message,
@@ -447,14 +524,22 @@ async function processJob(jobId: string): Promise<void> {
       }
     });
   } finally {
+    monitoring = false;
+    if (timeout) clearTimeout(timeout);
+    if (monitor) clearInterval(monitor);
+    await checking;
     if (job.status === "failed" || job.status === "cancelled") {
-      await cleanupJobArtifacts(job);
+      await cleanupJobArtifacts(job).catch(() => logJob(job.id, "cleanup failed; retained for retry"));
       scheduleJobDeletion(job, `job ended with status=${job.status}`);
     }
   }
 }
 
 export function createDownloadJob(input: JobInput): DownloadJobSummary {
+  if (shuttingDown) throw new AppError("Download server is shutting down.", 503);
+  if (jobs.size >= env.maxRetainedJobs) throw new AppError("Retained job capacity reached. Retry after files expire.", 503);
+  if (activeJobs.size + pendingJobs.length >= env.maxConcurrentJobs + env.maxQueuedJobs) throw new AppError("Download queue is at capacity. Retry later.", 503);
+  if (reservedBytes + env.maxJobBytes > env.maxStorageBytes) throw new AppError("Download storage capacity reached. Retry after files expire.", 503);
   const id = crypto.randomUUID();
   const items: DownloadJobItemSummary[] = [];
   for (const url of input.urls) {
@@ -497,8 +582,10 @@ export function createDownloadJob(input: JobInput): DownloadJobSummary {
   };
 
   jobs.set(id, job);
+  reservedBytes += env.maxJobBytes;
+  pendingJobs.push(job);
   logJob(id, `created urls=${input.urls.length} formats=${input.formats.join(",")} total=${total}`);
-  queueMicrotask(() => { void processJob(id); });
+  queueMicrotask(startQueuedJobs);
 
   return summarizeJob(job);
 }
@@ -591,4 +678,9 @@ export async function cancelDownloadJob(jobId: string): Promise<void> {
   });
 
   job.abortController.abort();
+  const queuedIndex = pendingJobs.indexOf(job);
+  if (queuedIndex >= 0) {
+    pendingJobs.splice(queuedIndex, 1);
+    job.done = processJob(job.id);
+  }
 }

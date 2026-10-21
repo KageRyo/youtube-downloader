@@ -150,3 +150,32 @@ describe("download api", () => {
     await fs.rm(tmpDir, { recursive: true, force: true });
   });
 });
+
+describe("job admission", () => {
+  it("returns retry guidance when the worker queue is full and removes uploaded cookies", async () => {
+    const { AppError } = await import("../src/utils/errors");
+    mocks.createDownloadJob.mockImplementationOnce(() => { throw new AppError("Download queue is at capacity.", 503); });
+    const response = await request(app).post("/api/download")
+      .field("urls", "https://youtu.be/a").field("format", "mp4")
+      .attach("cookiesFile", Buffer.from("secret-cookie"), "cookies.txt").expect(503);
+    expect(response.headers["retry-after"]).toBeTruthy();
+    const cookiePath = mocks.createDownloadJob.mock.calls.at(-1)?.[0].cookiesFilePath;
+    expect(cookiePath).toBeTruthy();
+    await expect(fs.stat(cookiePath)).rejects.toMatchObject({ code: "ENOENT" });
+  });
+
+  it("rate limits creation before accepting cookie uploads without trusting forwarded headers", async () => {
+    const { env } = await import("../src/config/env");
+    const previous = env.creationRateLimit;
+    env.creationRateLimit = 1;
+    const limitedApp = createApp();
+    try {
+      mocks.createDownloadJob.mockReturnValue(queuedJob);
+      await request(limitedApp).post("/api/download").field("urls", "https://youtu.be/a").field("format", "mp4").expect(202);
+      const response = await request(limitedApp).post("/api/download").set("X-Forwarded-For", "203.0.113.8")
+        .field("urls", "https://youtu.be/b").field("format", "mp4").expect(429);
+      expect(Number(response.headers["retry-after"])).toBeGreaterThan(0);
+      await request(limitedApp).get("/api/health").expect(200);
+    } finally { env.creationRateLimit = previous; }
+  });
+});

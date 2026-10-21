@@ -1,7 +1,7 @@
 import express, { NextFunction, Request, Response } from "express";
 import path from "node:path";
 
-import { downloadRoutes } from "./routes/downloadRoutes";
+import { createDownloadRoutes } from "./routes/downloadRoutes";
 import { AppError } from "./utils/errors";
 
 export function createApp() {
@@ -24,10 +24,11 @@ export function createApp() {
     next();
   });
 
-  app.use("/api", downloadRoutes);
+  app.use("/api", createDownloadRoutes());
 
   app.use((error: unknown, _req: Request, res: Response, _next: NextFunction) => {
     if (error instanceof AppError) {
+      if (error.statusCode === 503) res.setHeader("Retry-After", "60");
       res.status(error.statusCode).json({ message: error.message });
       return;
     }

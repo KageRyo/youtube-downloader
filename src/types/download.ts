@@ -19,6 +19,8 @@ export interface DownloadRequest {
   url: string;
   format: DownloadFormat;
   cookiesFilePath?: string;
+  tempRoot?: string;
+  maxBytes?: number;
   progress?: DownloadProgressReporter;
   signal?: AbortSignal;
 }
