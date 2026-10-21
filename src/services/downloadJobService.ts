@@ -175,10 +175,9 @@ function updateJob(
   const bucketChanged = previousBucket !== nextBucket;
 
   if (statusChanged || stageChanged || bucketChanged || patch.error) {
-    const detail = job.progress.detail ? ` detail=${job.progress.detail}` : "";
     logJob(
       job.id,
-      `status=${job.status} stage=${job.progress.stage} item=${job.progress.itemPercent.toFixed(1)}% total=${job.progress.percent.toFixed(1)}% current=${job.progress.current}/${job.progress.total}${detail}`
+      `status=${job.status} stage=${job.progress.stage} item=${job.progress.itemPercent.toFixed(1)}% total=${job.progress.percent.toFixed(1)}% current=${job.progress.current}/${job.progress.total}`
     );
   }
 }

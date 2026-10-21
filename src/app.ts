@@ -14,11 +14,11 @@ export function createApp() {
   app.use("/api", (req: Request, res: Response, next: NextFunction) => {
     const startedAt = Date.now();
     const stamp = new Date().toISOString();
-    console.log(`[api ${stamp}] ${req.method} ${req.originalUrl} started`);
+    console.log(`[api ${stamp}] ${req.method} ${req.path} started`);
 
     res.on("finish", () => {
       const durationMs = Date.now() - startedAt;
-      console.log(`[api ${stamp}] ${req.method} ${req.originalUrl} -> ${res.statusCode} (${durationMs}ms)`);
+      console.log(`[api ${stamp}] ${req.method} ${req.path} -> ${res.statusCode} (${durationMs}ms)`);
     });
 
     next();
@@ -33,7 +33,7 @@ export function createApp() {
       return;
     }
 
-    console.error(error);
+    console.error("Unhandled request error.");
     res.status(500).json({ message: "An unexpected server error occurred." });
   });
 

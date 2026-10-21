@@ -70,3 +70,37 @@ describe("command cancellation", () => {
     expect(mocks.spawn).not.toHaveBeenCalled();
   });
 });
+
+describe("bounded command diagnostics", () => {
+  it("keeps byte-bounded tails while forwarding all progress chunks", async () => {
+    const child = new Child();
+    mocks.spawn.mockReturnValue(child);
+    let receivedBytes = 0;
+    const result = runCommand("fixture", [], { onStdout: (chunk) => { receivedBytes += Buffer.byteLength(chunk); } });
+    child.stdout.write(Buffer.alloc(1024 * 1024, "x"));
+    child.stdout.write("FINAL OUTPUT");
+    child.stderr.write(Buffer.alloc(1024 * 1024, "e"));
+    child.stderr.write("Useful final failure");
+    child.emit("close", 1);
+    const output = await result;
+    expect(Buffer.byteLength(output.stdout)).toBeLessThanOrEqual(64 * 1024);
+    expect(Buffer.byteLength(output.stderr)).toBeLessThanOrEqual(64 * 1024);
+    expect(output.stdout.endsWith("FINAL OUTPUT")).toBe(true);
+    expect(output.stderr.endsWith("Useful final failure")).toBe(true);
+    expect(receivedBytes).toBe(1024 * 1024 + 12);
+  });
+
+  it("preserves UTF-8 across chunks and starts the retained tail at a character boundary", async () => {
+    const child = new Child();
+    mocks.spawn.mockReturnValue(child);
+    const result = runCommand("fixture", []);
+    const bytes = Buffer.from("音🎵".repeat(20000));
+    child.stdout.write(bytes.subarray(0, 5));
+    child.stdout.write(bytes.subarray(5));
+    child.emit("close", 0);
+    const output = await result;
+    expect(output.stdout).not.toContain("�");
+    expect(Buffer.byteLength(output.stdout)).toBeLessThanOrEqual(64 * 1024);
+    expect(output.stdout.endsWith("音🎵")).toBe(true);
+  });
+});

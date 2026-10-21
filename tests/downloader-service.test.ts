@@ -164,6 +164,19 @@ describe("prepareDownload temporary directory lifecycle", () => {
     await result.cleanup();
   });
 
+  it("does not log input URLs, raw tool diagnostics, browser profiles or cookie paths", async () => {
+    const logs = vi.spyOn(console, "log").mockImplementation(() => {});
+    const writes = vi.spyOn(process.stderr, "write");
+    env.ytDlpCookiesFromBrowser = "chrome:/private/profile";
+    download = (child) => {
+      child.stderr.write("Sign in: https://youtu.be/PRIVATE_ID cookie=/private/cookies.txt");
+      child.emit("close", 1);
+    };
+    await expect(prepareDownload({ ...request, url: "https://youtu.be/PRIVATE_ID?token=secret" })).rejects.toThrow();
+    expect(logs.mock.calls.flat().join(" ")).not.toMatch(/PRIVATE_ID|token=secret|private\/profile/);
+    expect(writes.mock.calls.map((call) => String(call[0])).join(" ")).not.toMatch(/PRIVATE_ID|private\/cookies/);
+  });
+
   it("removes partial files after a spawn error and preserves the error", async () => {
     const error = Object.assign(new Error("spawn yt-dlp ENOENT"), { code: "ENOENT" });
     download = async (child, tempDir) => {
