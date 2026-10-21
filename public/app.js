@@ -1,10 +1,6 @@
 const form = document.getElementById("downloadForm");
 const statusEl = document.getElementById("status");
 const progressBar = document.getElementById("progressBar");
-const downloadActions = document.getElementById("downloadActions");
-const downloadLink = document.getElementById("downloadLink");
-const itemDownloads = document.getElementById("itemDownloads");
-const itemDownloadList = document.getElementById("itemDownloadList");
 const submitBtn = document.getElementById("submitBtn");
 const languageSelect = document.getElementById("languageSelect");
 const urlsInput = document.getElementById("urls");
@@ -77,7 +73,6 @@ const localeStorageKey = "preferredLocale";
 let currentLocale = "en";
 let activeJobId = null;
 let activeJobStatus = null;
-let latestCompletedItems = [];
 let latestProgressJob = null;
 
 function isCancellableStatus(status) {
@@ -101,10 +96,9 @@ function applyLocaleToPage() {
     element.setAttribute("placeholder", getLocaleText(key));
   });
 
-  downloadLink.textContent = getLocaleText("downloadFileButton");
-  renderItemDownloads(latestCompletedItems);
   document.documentElement.lang = currentLocale;
   if (latestProgressJob) renderJobProgress(latestProgressJob);
+  if (typeof tasks !== "undefined") renderTaskPanel(Array.from(tasks.values()));
 }
 
 function setLocale(nextLocale) {
@@ -147,63 +141,6 @@ function setProgress(percent) {
   progressBar.setAttribute("aria-valuenow", `${clamped}`);
 }
 
-function hideDownloadAction() {
-  downloadActions.classList.add("hidden");
-  downloadLink.setAttribute("href", "#");
-  downloadLink.removeAttribute("download");
-  downloadLink.textContent = getLocaleText("downloadFileButton");
-}
-
-function hideItemDownloads() {
-  latestCompletedItems = [];
-  itemDownloadList.innerHTML = "";
-  itemDownloads.classList.add("hidden");
-}
-
-function formatItemLabel(item, index) {
-  const template = getLocaleText("itemDownloadLabel");
-  const fallbackName = item.downloadName || item.id;
-  return template
-    .replace("{index}", `${index + 1}`)
-    .replace("{format}", `[${(item.format || "").toUpperCase()}]`)
-    .replace("{name}", fallbackName);
-}
-
-function renderItemDownloads(items) {
-  latestCompletedItems = Array.isArray(items) ? items : [];
-  itemDownloadList.innerHTML = "";
-
-  if (latestCompletedItems.length === 0) {
-    itemDownloads.classList.add("hidden");
-    return;
-  }
-
-  latestCompletedItems.forEach((item, index) => {
-    const li = document.createElement("li");
-    const anchor = document.createElement("a");
-    anchor.href = `/api/download/${activeJobId || item.jobId || ""}/items/${item.id}/file`;
-    anchor.setAttribute("download", item.downloadName || `item-${index + 1}`);
-    anchor.textContent = formatItemLabel(item, index);
-    li.appendChild(anchor);
-    itemDownloadList.appendChild(li);
-  });
-
-  itemDownloads.classList.remove("hidden");
-}
-
-function showDownloadAction(downloadUrl, fileName, autoStart = true) {
-  downloadLink.setAttribute("href", downloadUrl);
-  downloadLink.setAttribute("download", fileName);
-  downloadLink.textContent = getLocaleText("downloadFileButton");
-  downloadActions.classList.remove("hidden");
-
-  if (autoStart) {
-    window.setTimeout(() => {
-      downloadLink.click();
-    }, 0);
-  }
-}
-
 function normalizeUrls(input) {
   return input
     .split(/\r?\n/)
@@ -215,171 +152,217 @@ async function sleep(ms) {
   return new Promise((resolve) => window.setTimeout(resolve, ms));
 }
 
-async function fetchJobStatus(jobId) {
-  const response = await fetch(`/api/download/${jobId}`);
+// Store only opaque server IDs. Summaries and submission data stay in memory.
+const taskStorageKey = "downloadJobIds";
+const tasks = new Map();
+const submissions = new Map();
+const polling = new Set();
+const cancelling = new Set();
+const retrying = new Set();
+const taskRevisions = new Map();
+let submitting = false;
+let submissionGeneration = 0;
+
+const taskText = {
+  en: {title: "Download tasks", cancel: "Cancel", retry: "Retry failed items", pending: "Pending", running: "Downloading", completed: "Completed", failed: "Failed", cancelled: "Cancelled", queued: "Queued", expired: "Expired", unavailable: "Connection lost. Check again", check: "Check status", retrySettings: "After a reload, retries use the current form settings. Reselect cookies.txt if needed.", cancelledHint: "Cancellation requested", cancelFailed: "Could not cancel. Please try again.", partial: "Completed with failed items", forget: "Dismiss"},
+  "zh-Hant": {title: "下載任務", cancel: "取消", retry: "重試失敗項目", pending: "等待中", running: "下載中", completed: "已完成", failed: "失敗", cancelled: "已取消", queued: "排隊中", expired: "已過期", unavailable: "連線中斷，請重新查詢", check: "查詢狀態", retrySettings: "重新載入後，重試會使用目前表單設定；如有需要，請重新選取 cookies.txt。", cancelledHint: "已請求取消", cancelFailed: "無法取消，請再試一次。", partial: "部分項目下載失敗", forget: "移除"}
+};
+function taskLabel(key) { return taskText[currentLocale][key] || key; }
+function persistedJobIds(jobs) {
+  return jobs.map((job) => job.id).filter((id) => /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(id));
+}
+function persistTasks() {
+  try { sessionStorage.setItem(taskStorageKey, JSON.stringify(persistedJobIds(Array.from(tasks.values())))); } catch { /* unavailable storage does not block downloads */ }
+}
+function copyFormData(source) {
+  const data = new FormData();
+  for (const [key, value] of source.entries()) data.append(key, value);
+  return data;
+}
+function buildRetryData(job, original) {
+  const data = copyFormData(original || new FormData(form));
+  const items = (job.items || []).filter((item) => item.status === "failed").map(({ url, format }) => ({ url, format }));
+  data.set("items", JSON.stringify(items));
+  data.set("urls", [...new Set(items.map((item) => item.url))].join("\n"));
+  data.delete("format");
+  [...new Set(items.map((item) => item.format))].forEach((format) => data.append("format", format));
+  return data;
+}
+function taskButton(label, action, disabled = false, jobId = "") {
+  const button = document.createElement("button");
+  button.type = "button";
+  button.textContent = taskLabel(label);
+  button.disabled = disabled;
+  button.dataset.taskFocus = `${jobId}:${label}`;
+  button.addEventListener("click", action);
+  return button;
+}
+function renderTaskPanel(jobs) {
+  const panel = document.getElementById("taskList");
+  const focusKey = document.activeElement?.dataset.taskFocus;
+  panel.replaceChildren();
+  document.getElementById("taskPanel").classList.toggle("hidden", jobs.length === 0);
+  document.getElementById("taskTitle").textContent = taskLabel("title");
+  document.getElementById("retrySettings").textContent = taskLabel("retrySettings");
+  for (const job of jobs) {
+    const card = document.createElement("li");
+    const heading = document.createElement("p");
+    const partial = job.status === "completed" && job.items?.some((item) => item.status === "failed");
+    heading.textContent = `${job.id} — ${taskLabel(job.connectionError ? "unavailable" : partial ? "partial" : job.status)}`;
+    card.appendChild(heading);
+    if (job.expiresAt) {
+      const expiry = document.createElement("small");
+      expiry.textContent = `${currentLocale === "zh-Hant" ? "到期時間" : "Expires"}: ${new Date(job.expiresAt).toLocaleString(currentLocale)}`;
+      card.appendChild(expiry);
+    }
+    const list = document.createElement("ul");
+    (job.items || []).forEach((item, index) => {
+      const row = document.createElement("li");
+      const label = document.createElement("span");
+      label.textContent = `${index + 1}. [${item.format?.toUpperCase() || ""}] ${item.downloadName || item.url || ""} — ${taskLabel(item.status)}`;
+      row.appendChild(label);
+      if (item.error) {
+        const error = document.createElement("p");
+        error.className = "status err";
+        error.textContent = item.error;
+        row.appendChild(error);
+      }
+      if (item.status === "completed" && !["expired", "cancelled", "failed"].includes(job.status)) {
+        const link = document.createElement("a");
+        link.dataset.taskFocus = `${job.id}:item:${item.id}`;
+        link.href = `/api/download/${job.id}/items/${item.id}/file`;
+        link.setAttribute("download", item.downloadName || `item-${index + 1}`);
+        link.textContent = getLocaleText("downloadFileButton");
+        row.appendChild(link);
+      }
+      list.appendChild(row);
+    });
+    card.appendChild(list);
+    if (job.error) { const error = document.createElement("p"); error.textContent = job.error; card.appendChild(error); }
+    if (job.status === "completed") {
+      const link = document.createElement("a");
+      link.dataset.taskFocus = `${job.id}:file`;
+      link.href = `/api/download/${job.id}/file`;
+      link.setAttribute("download", job.downloadName || "download.zip");
+      link.textContent = getLocaleText("downloadFileButton");
+      card.appendChild(link);
+    }
+    if (isCancellableStatus(job.status)) card.appendChild(taskButton("cancel", () => cancelTask(job.id), cancelling.has(job.id), job.id));
+    if (!isCancellableStatus(job.status) && job.status !== "expired" && job.items?.some((item) => item.status === "failed")) card.appendChild(taskButton("retry", () => retryTask(job.id), retrying.has(job.id), job.id));
+    if (job.connectionError) card.appendChild(taskButton("check", () => pollTask(job.id), false, job.id));
+    if (!isCancellableStatus(job.status)) card.appendChild(taskButton("forget", () => { tasks.delete(job.id); submissions.delete(job.id); persistTasks(); renderTasks(); }, false, job.id));
+    panel.appendChild(card);
+  }
+  if (focusKey) {
+    for (const element of panel.querySelectorAll("[data-task-focus]")) {
+      if (element.dataset.taskFocus === focusKey) { element.focus(); break; }
+    }
+  }
+}
+function renderTasks() { renderTaskPanel(Array.from(tasks.values())); }
+function updateTask(job) {
+  tasks.set(job.id, job);
+  persistTasks();
+  renderTasks();
+  if (activeJobId === job.id) {
+    activeJobStatus = job.status;
+    if (isCancellableStatus(job.status)) renderJobProgress(job);
+    else {
+      latestProgressJob = null;
+      setStatus(getLocaleText(job.status === "completed" ? "statusReady" : job.status === "cancelled" ? "statusCancelled" : job.status === "expired" ? "statusExpired" : "statusFailed"), job.status === "completed" ? "ok" : "err");
+      setProgress(job.status === "completed" ? 100 : job.progress?.percent || 0);
+    }
+  }
+}
+async function pollTask(id) {
+  if (polling.has(id) || !tasks.has(id)) return;
+  polling.add(id);
+  try {
+    while (tasks.has(id)) {
+      const revision = taskRevisions.get(id) || 0;
+      const response = await fetch(`/api/download/${id}`);
+      if (revision !== (taskRevisions.get(id) || 0) || cancelling.has(id)) { await sleep(100); continue; }
+      if (!tasks.has(id)) return;
+      if (response.status === 404) { updateTask({id, status: "expired", items: []}); return; }
+      if (!response.ok) throw new Error("poll failed");
+      const job = await response.json();
+      if (revision !== (taskRevisions.get(id) || 0) || cancelling.has(id)) { await sleep(100); continue; }
+      if (!tasks.has(id)) return;
+      updateTask(job);
+      if (!isCancellableStatus(job.status)) return;
+      await sleep(1000);
+    }
+  } catch {
+    if (tasks.has(id)) { tasks.get(id).connectionError = true; renderTasks(); }
+  } finally { polling.delete(id); }
+}
+async function cancelTask(id) {
+  if (cancelling.has(id) || !isCancellableStatus(tasks.get(id)?.status)) return;
+  cancelling.add(id);
+  taskRevisions.set(id, (taskRevisions.get(id) || 0) + 1);
+  renderTasks();
+  try {
+    const response = await fetch(`/api/download/${id}/cancel`, {method: "POST"});
+    if (!response.ok) throw new Error("cancel failed");
+    // Read the authoritative summary through the poller. An older in-flight poll
+    // can never overwrite a cancellation response with a different summary.
+    if (!polling.has(id)) void pollTask(id);
+  } catch { if (tasks.has(id)) { tasks.get(id).error = taskLabel("cancelFailed"); renderTasks(); } }
+  finally {
+    taskRevisions.set(id, (taskRevisions.get(id) || 0) + 1);
+    cancelling.delete(id); renderTasks();
+    if (!polling.has(id)) void pollTask(id);
+  }
+}
+async function submitTask(data) {
+  const generation = ++submissionGeneration;
+  activeJobId = null;
+  latestProgressJob = null;
+  const response = await fetch("/api/download", {method: "POST", body: data});
   if (!response.ok) {
     let message = getLocaleText("statusFailed");
-    try {
-      const payload = await response.json();
-      if (payload?.message) {
-        message = payload.message;
-      }
-    } catch {
-      // keep fallback message
-    }
-
-    if (response.status === 404) {
-      message = getLocaleText("statusExpired");
-    }
-
+    try { message = (await response.json()).message || message; } catch { /* keep fallback */ }
     throw new Error(message);
   }
-
-  return response.json();
+  const job = await response.json();
+  if (generation === submissionGeneration) activeJobId = job.id;
+  submissions.set(job.id, copyFormData(data));
+  updateTask(job);
+  if (isCancellableStatus(job.status)) void pollTask(job.id);
 }
-
-function cancelActiveJobIfNeeded() {
-  if (!activeJobId || !isCancellableStatus(activeJobStatus)) {
-    activeJobId = null;
-    activeJobStatus = null;
-    return;
-  }
-
-  const cancelUrl = `/api/download/${activeJobId}/cancel`;
-  const payload = JSON.stringify({ reason: "page-unload" });
-
-  if (navigator.sendBeacon) {
-    const blob = new Blob([payload], { type: "application/json" });
-    navigator.sendBeacon(cancelUrl, blob);
-  } else {
-    void fetch(cancelUrl, {
-      method: "POST",
-      headers: {
-        "Content-Type": "application/json"
-      },
-      body: payload,
-      keepalive: true
-    }).catch(() => undefined);
-  }
-
-  activeJobId = null;
-  activeJobStatus = null;
+async function retryTask(id) {
+  if (retrying.has(id)) return;
+  const job = tasks.get(id);
+  if (!job || !job.items?.some((item) => item.status === "failed")) return;
+  retrying.add(id); renderTasks();
+  try { await submitTask(buildRetryData(job, submissions.get(id))); }
+  catch (error) { setStatus(error.message || getLocaleText("statusFailed"), "err"); }
+  finally { retrying.delete(id); renderTasks(); }
 }
-
-downloadLink.addEventListener("click", () => {
-  activeJobId = null;
-  activeJobStatus = null;
-});
-
-window.addEventListener("pagehide", cancelActiveJobIfNeeded);
-window.addEventListener("beforeunload", cancelActiveJobIfNeeded);
-
 form.addEventListener("submit", async (event) => {
   event.preventDefault();
-  cancelActiveJobIfNeeded();
-  hideDownloadAction();
-  hideItemDownloads();
-
-  const urlLines = normalizeUrls(urlsInput.value);
-  if (urlLines.length === 0) {
-    setStatus(getLocaleText("statusNeedUrl"), "err");
-    return;
-  }
-
-  const formData = new FormData(form);
-  const selectedFormats = formData
-    .getAll("format")
-    .map((value) => `${value}`)
-    .filter((value) => value === "mp3" || value === "mp4");
-
-  if (selectedFormats.length === 0) {
-    setStatus(getLocaleText("statusNeedFormat"), "err");
-    return;
-  }
-
-  formData.set("urls", urlLines.join("\n"));
-  for (const key of Array.from(formData.keys())) {
-    if (key === "format") {
-      formData.delete("format");
-      break;
-    }
-  }
-  selectedFormats.forEach((format) => {
-    formData.append("format", format);
-  });
-
+  if (submitting) return;
+  const urls = normalizeUrls(urlsInput.value);
+  const data = new FormData(form);
+  if (!urls.length) { setStatus(getLocaleText("statusNeedUrl"), "err"); return; }
+  if (!data.getAll("format").some((format) => format === "mp3" || format === "mp4")) { setStatus(getLocaleText("statusNeedFormat"), "err"); return; }
+  data.set("urls", urls.join("\n"));
+  submitting = true; submitBtn.disabled = true;
   setStatus(getLocaleText("statusStarting"), "progress");
-  setProgress(5);
-  submitBtn.disabled = true;
-
-  try {
-    const response = await fetch("/api/download", {
-      method: "POST",
-      body: formData
-    });
-
-    if (!response.ok) {
-      let message = getLocaleText("statusFailed");
-      try {
-        const payload = await response.json();
-        if (payload?.message) {
-          message = payload.message;
-        }
-      } catch {
-        // keep fallback message
-      }
-      throw new Error(message);
-    }
-
-    const job = await response.json();
-    let currentJob = job;
-    activeJobId = currentJob.id;
-    activeJobStatus = currentJob.status;
-    renderJobProgress(currentJob);
-    setProgress(currentJob.progress?.percent ?? currentJob.progress?.itemPercent ?? 0);
-
-    while (currentJob.status === "queued" || currentJob.status === "running") {
-      await sleep(1000);
-      currentJob = await fetchJobStatus(currentJob.id);
-      activeJobStatus = currentJob.status;
-      renderJobProgress(currentJob);
-    }
-
-    latestProgressJob = null;
-    if (currentJob.status === "failed") {
-      throw new Error(currentJob.error || currentJob.message || getLocaleText("statusFailed"));
-    }
-
-    if (currentJob.status === "cancelled") {
-      throw new Error(currentJob.message || getLocaleText("statusCancelled"));
-    }
-
-    const downloadUrl = `/api/download/${currentJob.id}/file`;
-    const fileName = currentJob.downloadName || "download.zip";
-    const completedItems = (currentJob.items || []).filter((item) => item.status === "completed");
-
-    renderItemDownloads(completedItems.map((item) => ({ ...item, jobId: currentJob.id })));
-
-    activeJobId = null;
-    activeJobStatus = null;
-
-    setStatus(`${getLocaleText("statusReady")} ${getLocaleText("statusManualDownloadHint")}`, "ok");
-    setProgress(100);
-    showDownloadAction(downloadUrl, fileName, true);
-  } catch (error) {
-    latestProgressJob = null;
-    const message = error instanceof Error ? error.message : getLocaleText("statusUnknownError");
-    setStatus(message, "err");
-    setProgress(0);
-    activeJobId = null;
-    activeJobStatus = null;
-  } finally {
-    submitBtn.disabled = false;
-  }
+  try { await submitTask(data); }
+  catch (error) { setStatus(error.message || getLocaleText("statusFailed"), "err"); }
+  finally { submitting = false; submitBtn.disabled = false; }
 });
-
-languageSelect.addEventListener("change", () => {
-  setLocale(languageSelect.value);
-});
-
+languageSelect.addEventListener("change", () => setLocale(languageSelect.value));
 initLocale();
+try {
+  const ids = JSON.parse(sessionStorage.getItem(taskStorageKey) || "[]");
+  if (Array.isArray(ids)) {
+    for (const id of persistedJobIds(ids.map((id) => ({id})))) {
+      tasks.set(id, {id, status: "queued", items: []});
+      activeJobId = id;
+      void pollTask(id);
+    }
+  }
+} catch { /* corrupt or unavailable storage does not block downloads */ }
+renderTasks();
