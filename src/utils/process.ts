@@ -104,7 +104,7 @@ export function runCommand(
       if (process.platform === "win32" && child.pid) {
         // taskkill terminates the full tree; child.kill alone leaves FFmpeg alive.
         terminationPending = true;
-        const killer = spawn("taskkill", ["/PID", String(child.pid), "/T", "/F"], { stdio: "ignore", windowsHide: true });
+        const killer = spawn(path.join(process.env.SystemRoot ?? "C:\\Windows", "System32", "taskkill.exe"), ["/PID", String(child.pid), "/T", "/F"], { stdio: "ignore", windowsHide: true });
         killer.once("error", () => { child.kill("SIGKILL"); });
         killer.once("close", () => { terminationPending = false; finishAbort(); });
       } else {
@@ -151,7 +151,7 @@ export function runCommand(
     child.on("close", (code) => {
       closed = true;
       if (aborted) {
-        if (process.platform !== "win32" && !groupExists()) terminationPending = false;
+        if (!child.pid || process.platform !== "win32" && !groupExists()) terminationPending = false;
         finishAbort();
         return;
       }
