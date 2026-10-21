@@ -88,12 +88,10 @@ async function ensureDependencies(format: DownloadRequest["format"]): Promise<st
   }
 
   const location = getFfmpegLocation();
-  if (format === "mp3") {
-    for (const tool of ["ffmpeg", "ffprobe"]) {
-      const executable = location ? path.join(location, `${tool}${process.platform === "win32" ? ".exe" : ""}`) : tool;
-      if (!await isCommandAvailable(executable, { preferLocal: false })) {
-        throw new AppError(`${tool} is required for mp3 downloads. Install both ffmpeg and ffprobe in PATH or tools/bin.`, 500);
-      }
+  for (const tool of ["ffmpeg", "ffprobe"]) {
+    const executable = location ? path.join(location, `${tool}${process.platform === "win32" ? ".exe" : ""}`) : tool;
+    if (!await isCommandAvailable(executable, { preferLocal: false })) {
+      throw new AppError(`${tool} is required for ${format} downloads. Install both ffmpeg and ffprobe in PATH or tools/bin.`, 500);
     }
   }
   return location;
@@ -130,7 +128,7 @@ export async function prepareDownload(request: DownloadRequest): Promise<Downloa
     if (request.format === "mp3") {
       baseArgs.push("-x", "--audio-format", "mp3", "--audio-quality", "0");
     } else {
-      baseArgs.push("-f", "bv*+ba/b");
+      baseArgs.push("-f", "bv*+ba/b", "--merge-output-format", "mp4", "--remux-video", "mp4", "-S", "vcodec:h264,acodec:aac");
     }
 
     baseArgs.push(request.url);
@@ -257,6 +255,30 @@ export async function prepareDownload(request: DownloadRequest): Promise<Downloa
       filePath = path.join(tempDir, firstFile);
     }
 
+    const actualPath = await fs.realpath(filePath);
+    const directory = await fs.realpath(tempDir);
+    const relative = path.relative(directory, actualPath);
+    const outputStat = await fs.stat(actualPath);
+    if (!relative || relative.startsWith(`..${path.sep}`) || relative === ".." || path.isAbsolute(relative) || !outputStat.isFile() || outputStat.size === 0) {
+      throw new AppError("The downloader did not produce a valid media file in its working directory.", 500);
+    }
+    if (request.format === "mp4") {
+      if (path.extname(filePath).toLowerCase() !== ".mp4") {
+        throw new AppError("MP4 output was not produced. The source may not support MP4 remuxing without recoding.", 400);
+      }
+      const probePath = ffmpegLocation ? path.join(ffmpegLocation, `ffprobe${process.platform === "win32" ? ".exe" : ""}`) : "ffprobe";
+      const probe = await runCommand(probePath, ["-v", "error", "-show_entries", "format=format_name:format_tags=major_brand:stream=codec_type", "-of", "json", actualPath], {
+        signal: request.signal, preferLocal: false
+      });
+      let valid = false;
+      try {
+        const metadata = JSON.parse(probe.stdout);
+        valid = probe.code === 0 && metadata.format?.format_name?.split(",").includes("mp4") &&
+          /^(?:isom|iso[2-9]|mp4[12]|avc1|dash|M4V|MSNV|cmf[cs]|av01)$/.test(metadata.format?.tags?.major_brand?.trim() ?? "") &&
+          metadata.streams?.some((stream: { codec_type?: string }) => stream.codec_type === "video");
+      } catch { /* Invalid probe output is rejected below. */ }
+      if (!valid) throw new AppError("MP4 container verification failed. The source could not be delivered as a valid MP4 video without recoding.", 400);
+    }
     const downloadName = getDownloadFileName(filePath);
     request.progress?.("completed", downloadName, 100);
     logDownload(`job completed url=${request.url} format=${request.format} file=${downloadName}`);
