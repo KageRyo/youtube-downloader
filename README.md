@@ -136,6 +136,7 @@ Behavior:
 - Single URL + multiple formats: the job bundles outputs into one zip.
 - Multiple URLs: the job bundles outputs into one zip.
 - Completed files expire automatically after the configured TTL and are removed from disk.
+- Cancellation waits for the downloader process to close before file cleanup. Linux/macOS signal the process group and escalate after 1.5 seconds; Windows terminates the process tree with `taskkill /T /F`.
 - The web client auto-sends job cancellation when the page is closed or navigated away.
 - If no authentication is required, cookies are not needed.
 - If access is restricted, provide a valid `cookies.txt` from an account that has legal access.
