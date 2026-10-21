@@ -146,6 +146,23 @@ npm run typecheck # Type-check only
 npm test          # Run tests in tests/
 ```
 
+## Validation
+
+Use Node.js 22 or 24 (CI checks both on Linux and Windows). `.nvmrc` selects Node.js 22.
+Run the same checks locally:
+
+```bash
+npm ci --ignore-scripts
+npm run typecheck
+npm run build
+npm test
+```
+
+Tests replace external downloader processes with deterministic fixtures. They cover
+successful and failed downloads, temporary-file cleanup, batch progress, and ZIP
+extraction without making requests to YouTube. Cancellation and output validation
+regressions are added alongside their fixes.
+
 ## Deployment Notes
 
 This project is not a static-only application.
