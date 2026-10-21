@@ -297,6 +297,50 @@ temp root have stopped. Keep the root private and dedicated to this application;
 startup recovery does not replace a filesystem quota or coordination between
 server instances.
 
+## Docker Compose
+
+Requires Docker Engine with the Compose plugin (Docker Desktop with WSL integration
+on Windows). From this checkout:
+
+```bash
+docker compose up --build --detach --wait
+docker compose exec app node dist/doctor.js
+curl --fail http://127.0.0.1:3000/api/health
+docker compose down
+```
+
+Open <http://127.0.0.1:3000>. Set `export APP_PORT=3001` before the commands to change
+the host port. Compose binds the published port to localhost; the process listens
+on `0.0.0.0` inside its container. The healthcheck verifies the HTTP service;
+`doctor` separately verifies executable tools and temporary storage. Neither
+check confirms current YouTube access. Run `./scripts/docker-smoke.sh` for the
+same isolated build/runtime/shutdown check used by Docker CI.
+
+The multi-stage image pins the Node 22 base by manifest digest, npm dependencies
+by `package-lock.json`, and official yt-dlp `2026.08.19` by SHA-256 (including its
+matching EJS solver). FFmpeg, ffprobe and Python come from the dated Debian
+snapshot in `Dockerfile`. Refresh the digest, snapshot and yt-dlp version/hash
+together as needed for security fixes and YouTube compatibility, then rebuild
+and rerun the smoke check. These pins make inputs traceable; they do not promise
+bit-for-bit identical image output across architectures or build tools.
+
+The runtime runs as the `node` user with a read-only root filesystem, dropped
+capabilities, no new privileges, 2 CPUs, 2 GiB memory and 128 PIDs. Downloads,
+uploaded cookies and tool caches use a 768 MiB `/tmp` tmpfs with mode `1777` and disappear when the container is removed. There are no host
+bind mounts or persistent volumes. The example allows one running job and
+reserves up to 512 MiB total, with 128 MiB per job including media **and its ZIP
+copy**. The remaining tmpfs space covers upload/intermediate-file overhead and
+bytes written between application checks. A hard tmpfs limit can fail a job
+before the application reports its own budget error. tmpfs pages consume the
+container's memory allowance, so raising storage limits also needs memory
+headroom for Node and FFmpeg. Adjust all limits together for larger videos.
+
+This example is intended for local use. Before publishing it beyond localhost,
+put authentication, HTTPS and request limits at a reverse proxy and review the
+security notes below. Compose forwards SIGTERM and allows 30 seconds for cleanup;
+forced termination can interrupt work. Each container has its own temporary
+storage; jobs cannot move between instances.
+
 ## Security and Access
 
 - This project does not include any bypass mechanism for restricted content.
