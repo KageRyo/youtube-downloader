@@ -80,9 +80,11 @@ function extractProgressPercent(chunk: string): number | null {
   return Math.max(0, Math.min(100, percent));
 }
 
-async function ensureDependencies(format: DownloadRequest["format"]): Promise<string | undefined> {
+async function ensureDependencies(format: DownloadRequest["format"], signal?: AbortSignal): Promise<string | undefined> {
+  signal?.throwIfAborted();
   logDownload(`checking dependencies for format=${format}`);
-  const hasYtDlp = await isCommandAvailable("yt-dlp");
+  const hasYtDlp = await isCommandAvailable("yt-dlp", { signal });
+  signal?.throwIfAborted();
   if (!hasYtDlp) {
     throw new AppError("yt-dlp is not available. Please install it first.", 500);
   }
@@ -90,7 +92,8 @@ async function ensureDependencies(format: DownloadRequest["format"]): Promise<st
   const location = getFfmpegLocation();
   for (const tool of ["ffmpeg", "ffprobe"]) {
     const executable = location ? path.join(location, `${tool}${process.platform === "win32" ? ".exe" : ""}`) : tool;
-    if (!await isCommandAvailable(executable, { preferLocal: false })) {
+    if (!await isCommandAvailable(executable, { preferLocal: false, signal })) {
+      signal?.throwIfAborted();
       throw new AppError(`${tool} is required for ${format} downloads. Install both ffmpeg and ffprobe in PATH or tools/bin.`, 500);
     }
   }
@@ -98,10 +101,11 @@ async function ensureDependencies(format: DownloadRequest["format"]): Promise<st
 }
 
 export async function prepareDownload(request: DownloadRequest): Promise<DownloadResult> {
-  const ffmpegLocation = await ensureDependencies(request.format);
+  const ffmpegLocation = await ensureDependencies(request.format, request.signal);
 
-  await fs.mkdir(env.tempRoot, { recursive: true });
-  const tempDir = await fs.mkdtemp(path.join(env.tempRoot, "job-"));
+  const tempRoot = request.tempRoot ?? env.tempRoot;
+  await fs.mkdir(tempRoot, { recursive: true });
+  const tempDir = await fs.mkdtemp(path.join(tempRoot, "item-"));
   try {
     logDownload(`starting job url=${request.url} format=${request.format} tempDir=${tempDir}`);
 
@@ -116,6 +120,8 @@ export async function prepareDownload(request: DownloadRequest): Promise<Downloa
       "--print",
       "after_move:filepath"
     ];
+
+    if (request.maxBytes) baseArgs.push("--max-filesize", String(request.maxBytes));
 
     if (ffmpegLocation) {
       baseArgs.push("--ffmpeg-location", ffmpegLocation);
