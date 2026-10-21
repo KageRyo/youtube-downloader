@@ -1,6 +1,6 @@
 import path from "node:path";
 import fs from "node:fs/promises";
-import { existsSync } from "node:fs";
+import fsNative, { existsSync } from "node:fs";
 
 import { env } from "../config/env";
 import { DownloadRequest, DownloadResult } from "../types/download";
@@ -46,8 +46,17 @@ function getDownloadFileName(filePath: string): string {
   return sanitizeFileName(path.basename(filePath));
 }
 
-function getLocalBinDir(): string {
-  return path.resolve(process.cwd(), "tools", "bin");
+function getFfmpegLocation(): string | undefined {
+  const directory = path.resolve(process.cwd(), "tools", "bin");
+  const suffix = process.platform === "win32" ? ".exe" : "";
+  try {
+    for (const tool of ["ffmpeg", "ffprobe"]) {
+      fsNative.accessSync(path.join(directory, `${tool}${suffix}`), fsNative.constants.X_OK);
+    }
+    return directory;
+  } catch {
+    return undefined;
+  }
 }
 
 function logDownload(message: string): void {
@@ -71,23 +80,27 @@ function extractProgressPercent(chunk: string): number | null {
   return Math.max(0, Math.min(100, percent));
 }
 
-async function ensureDependencies(format: DownloadRequest["format"]): Promise<void> {
+async function ensureDependencies(format: DownloadRequest["format"]): Promise<string | undefined> {
   logDownload(`checking dependencies for format=${format}`);
   const hasYtDlp = await isCommandAvailable("yt-dlp");
   if (!hasYtDlp) {
     throw new AppError("yt-dlp is not available. Please install it first.", 500);
   }
 
+  const location = getFfmpegLocation();
   if (format === "mp3") {
-    const hasFfmpeg = await isCommandAvailable("ffmpeg");
-    if (!hasFfmpeg) {
-      throw new AppError("ffmpeg is required for mp3 downloads. Please install it first.", 500);
+    for (const tool of ["ffmpeg", "ffprobe"]) {
+      const executable = location ? path.join(location, `${tool}${process.platform === "win32" ? ".exe" : ""}`) : tool;
+      if (!await isCommandAvailable(executable, { preferLocal: false })) {
+        throw new AppError(`${tool} is required for mp3 downloads. Install both ffmpeg and ffprobe in PATH or tools/bin.`, 500);
+      }
     }
   }
+  return location;
 }
 
 export async function prepareDownload(request: DownloadRequest): Promise<DownloadResult> {
-  await ensureDependencies(request.format);
+  const ffmpegLocation = await ensureDependencies(request.format);
 
   await fs.mkdir(env.tempRoot, { recursive: true });
   const tempDir = await fs.mkdtemp(path.join(env.tempRoot, "job-"));
@@ -95,12 +108,9 @@ export async function prepareDownload(request: DownloadRequest): Promise<Downloa
     logDownload(`starting job url=${request.url} format=${request.format} tempDir=${tempDir}`);
 
     const outputTemplate = path.join(tempDir, "%(title).160B.%(ext)s");
-    const localBinDir = getLocalBinDir();
     const baseArgs = [
       "--no-playlist",
       "--newline",
-      "--ffmpeg-location",
-      localBinDir,
       "--js-runtimes",
       `node:${process.execPath}`,
       "-o",
@@ -108,6 +118,10 @@ export async function prepareDownload(request: DownloadRequest): Promise<Downloa
       "--print",
       "after_move:filepath"
     ];
+
+    if (ffmpegLocation) {
+      baseArgs.push("--ffmpeg-location", ffmpegLocation);
+    }
 
     if (request.cookiesFilePath) {
       baseArgs.push("--cookies", request.cookiesFilePath);
@@ -121,7 +135,7 @@ export async function prepareDownload(request: DownloadRequest): Promise<Downloa
 
     baseArgs.push(request.url);
 
-    logDownload(`running yt-dlp with ffmpeg=${localBinDir}`);
+    logDownload(`running yt-dlp with ffmpeg=${ffmpegLocation ?? "PATH"}`);
 
     request.progress?.("running", "starting yt-dlp", 10);
 

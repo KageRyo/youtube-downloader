@@ -9,6 +9,7 @@ interface CommandResult {
 }
 
 interface RunCommandOptions {
+  preferLocal?: boolean;
   logPrefix?: string;
   emitOutput?: boolean;
   onStdout?: (chunk: string) => void;
@@ -21,7 +22,8 @@ function resolveExecutable(command: string): string {
     return command;
   }
 
-  const localCandidate = path.resolve(process.cwd(), "tools", "bin", command);
+  const fileName = process.platform === "win32" ? `${command}.exe` : command;
+  const localCandidate = path.resolve(process.cwd(), "tools", "bin", fileName);
   if (fs.existsSync(localCandidate)) {
     return localCandidate;
   }
@@ -54,7 +56,7 @@ export function runCommand(
       return;
     }
 
-    const child = spawn(resolveExecutable(command), args, { stdio: ["ignore", "pipe", "pipe"] });
+    const child = spawn(options.preferLocal === false ? command : resolveExecutable(command), args, { stdio: ["ignore", "pipe", "pipe"] });
     const shouldEmitOutput = options.emitOutput ?? false;
     const prefix = options.logPrefix ? `[${options.logPrefix}] ` : `[${command}] `;
     let settled = false;
@@ -129,10 +131,11 @@ export function runCommand(
   });
 }
 
-export async function isCommandAvailable(command: string): Promise<boolean> {
+export async function isCommandAvailable(command: string, options: RunCommandOptions = {}): Promise<boolean> {
   try {
-    const versionArgs = command === "ffmpeg" || command === "ffprobe" ? ["-version"] : ["--version"];
-    const result = await runCommand(command, versionArgs);
+    const toolName = path.basename(command).replace(/\.exe$/i, "");
+    const versionArgs = toolName === "ffmpeg" || toolName === "ffprobe" ? ["-version"] : ["--version"];
+    const result = await runCommand(command, versionArgs, options);
     return result.code === 0;
   } catch {
     return false;
