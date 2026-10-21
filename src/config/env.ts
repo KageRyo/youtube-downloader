@@ -21,6 +21,7 @@ export const env = {
   maxStorageBytes: positiveInteger("MAX_STORAGE_BYTES", 8 * 1024 * 1024 * 1024),
   jobTimeoutMs: positiveInteger("JOB_TIMEOUT_MS", 30 * 60 * 1000),
   creationRateLimit: positiveInteger("CREATION_RATE_LIMIT", 10),
+  orphanTempMaxAgeMs: positiveInteger("ORPHAN_TEMP_MAX_AGE_MS", 24 * 60 * 60 * 1000),
   host: process.env.HOST ?? "127.0.0.1",
   port: Number.isFinite(parsedPort) && parsedPort > 0 ? parsedPort : fallbackPort,
   tempRoot: process.env.DOWNLOADER_TMP_DIR ?? path.join(os.tmpdir(), "youtube-downloader"),

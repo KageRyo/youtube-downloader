@@ -8,6 +8,7 @@ import { DownloadFormat } from "../types/download";
 import { env } from "../config/env";
 import { parseDownloadOptions, parseSelections, parseYouTubeUrl } from "../utils/downloadOptions";
 import { AppError } from "../utils/errors";
+import { createOwnedTempDirectory } from "../services/tempDirectoryService";
 
 function parseFormats(value: unknown): DownloadFormat[] {
   const rawValues = Array.isArray(value) ? value : [value];
@@ -61,10 +62,14 @@ async function saveCookiesUpload(cookiesBuffer?: Buffer): Promise<{ path?: strin
     return { cleanup: async () => Promise.resolve() };
   }
 
-  await fs.mkdir(env.tempRoot, { recursive: true });
-  const dir = await fs.mkdtemp(path.join(env.tempRoot, "cookies-"));
+  const dir = await createOwnedTempDirectory(env.tempRoot, "cookies");
   const cookiePath = path.join(dir, "cookies.txt");
-  await fs.writeFile(cookiePath, cookiesBuffer);
+  try {
+    await fs.writeFile(cookiePath, cookiesBuffer, { mode: 0o600 });
+  } catch (error) {
+    await fs.rm(dir, { recursive: true, force: true });
+    throw error;
+  }
 
   return {
     path: cookiePath,
