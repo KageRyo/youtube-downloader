@@ -16,10 +16,6 @@ const i18n = {
     urlsLabel: "Video URLs (one per line)",
     urlsPlaceholder: "https://www.youtube.com/watch?v=...\nhttps://youtu.be/...",
     outputFormatLabel: "Output Format (select one or both)",
-    videoResolutionLabel: "Maximum video resolution",
-    audioBitrateLabel: "MP3 bitrate",
-    qualityBest: "Best available (default)",
-    qualityHelp: "Video uses the best available resolution at or below your selection; unavailable formats fail clearly.",
     cookiesLabel: "cookies.txt (Optional. Usually not required unless access is restricted.)",
     cookiesHelpTitle: "Need cookies.txt? Quick steps:",
     cookiesHelpStep1: "Log in to YouTube with the account that has access.",
@@ -47,10 +43,6 @@ const i18n = {
     urlsLabel: "影片連結（每行一個）",
     urlsPlaceholder: "https://www.youtube.com/watch?v=...\nhttps://youtu.be/...",
     outputFormatLabel: "輸出格式（可複選）",
-    videoResolutionLabel: "影片解析度上限",
-    audioBitrateLabel: "MP3 位元率",
-    qualityBest: "最佳可用品質（預設）",
-    qualityHelp: "影片會使用不超過所選上限的最佳解析度；沒有可用格式時會顯示錯誤。",
     cookiesLabel: "cookies.txt（選填，通常不需要；遇到權限限制再上傳）",
     cookiesHelpTitle: "需要 cookies.txt？快速三步驟：",
     cookiesHelpStep1: "先登入有權限觀看該影片的 YouTube 帳號。",
@@ -74,6 +66,13 @@ const i18n = {
   }
 };
 
+const qualityI18n = {
+  videoResolutionLabel: { en: "Maximum video resolution", "zh-Hant": "影片解析度上限" },
+  audioBitrateLabel: { en: "MP3 bitrate", "zh-Hant": "MP3 位元率" },
+  qualityBest: { en: "Best available (default)", "zh-Hant": "最佳可用品質（預設）" },
+  qualityHelp: { en: "Video uses the best available resolution at or below your selection; unavailable formats fail clearly.", "zh-Hant": "影片會使用不超過所選上限的最佳解析度；沒有可用格式時會顯示錯誤。" }
+};
+
 const localeStorageKey = "preferredLocale";
 let currentLocale = "en";
 let activeJobId = null;
@@ -85,7 +84,7 @@ function isCancellableStatus(status) {
 }
 
 function getLocaleText(key) {
-  return i18n[currentLocale]?.[key] ?? i18n.en[key] ?? "";
+  return qualityI18n[key]?.[currentLocale] ?? i18n[currentLocale]?.[key] ?? i18n.en[key] ?? "";
 }
 
 function applyLocaleToPage() {
