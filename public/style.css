@@ -285,3 +285,6 @@ input:focus {
 }
 
 .quality-controls select { padding: 0.65rem; border: 1px solid var(--line); border-radius: 8px; background: #fff; color: inherit; font: inherit; }
+.video-preview article { display: flow-root; padding: 0.75rem 0; border-bottom: 1px solid var(--line); overflow-wrap: anywhere; }
+.video-preview img { float: left; width: min(160px, 35%); border-radius: 8px; margin: 0 1rem 0.5rem 0; }
+.secondary { background: #edf3f8; color: #1e3a52; }
