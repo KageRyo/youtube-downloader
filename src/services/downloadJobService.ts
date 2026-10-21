@@ -37,6 +37,14 @@ interface InternalJob extends DownloadJobSummary {
 const jobs = new Map<string, InternalJob>();
 const DOWNLOAD_PROGRESS_MAX = 96;
 
+function throwIfCancelled(job: InternalJob): void {
+  if (job.abortController.signal.aborted) {
+    const error = new Error("Download was cancelled.");
+    error.name = "AbortError";
+    throw error;
+  }
+}
+
 function logJob(jobId: string, message: string): void {
   const timestamp = new Date().toISOString();
   console.log(`[job ${jobId} ${timestamp}] ${message}`);
@@ -67,6 +75,8 @@ function updateJob(
     progress?: Partial<InternalJob["progress"]>;
   }
 ): void {
+  // Cancellation is terminal; stale downloader callbacks cannot overwrite it.
+  if (job.status === "cancelled" && (patch.status && patch.status !== "cancelled" || patch.progress && patch.progress.stage !== "cancelled")) return;
   const previousStatus = job.status;
   const previousStage = job.progress.stage;
   const previousItemPercent = job.progress.itemPercent;
@@ -141,6 +151,7 @@ async function cleanupJobArtifacts(job: InternalJob): Promise<void> {
   }
 
   await fsPromises.rm(job.outputDir, { recursive: true, force: true });
+  job.itemArtifacts.clear();
 }
 
 async function cleanupAndDeleteJob(job: InternalJob): Promise<void> {
@@ -183,18 +194,36 @@ async function buildZipArchive(
   results: DownloadResult[],
   failedItems: FailedItem[] = []
 ): Promise<{ filePath: string; downloadName: string }> {
+  throwIfCancelled(job);
   const archiveName = `youtube-downloads-${Date.now()}-${job.id}.zip`;
   const archivePath = path.join(job.outputDir, `archive-${job.id}.zip`);
 
   await fsPromises.mkdir(job.outputDir, { recursive: true });
 
+  throwIfCancelled(job);
+
   await new Promise<void>((resolve, reject) => {
     const output = fs.createWriteStream(archivePath);
     const archive = archiver("zip", { zlib: { level: 9 } });
 
-    output.on("close", () => resolve());
-    output.on("error", reject);
-    archive.on("error", reject);
+    let failure: Error | undefined;
+    const fail = (error: Error) => {
+      failure ??= error;
+      archive.abort();
+      output.destroy();
+    };
+    const abort = () => {
+      const error = new Error("Download was cancelled while packaging.");
+      error.name = "AbortError";
+      fail(error);
+    };
+    output.on("close", () => {
+      job.abortController.signal.removeEventListener("abort", abort);
+      if (failure) reject(failure); else resolve();
+    });
+    output.on("error", fail);
+    archive.on("error", fail);
+    job.abortController.signal.addEventListener("abort", abort, { once: true });
 
     archive.pipe(output);
     const originalNames = new Set(results.map((file) => file.downloadName));
@@ -221,7 +250,7 @@ async function buildZipArchive(
       archive.append(lines.join("\n"), { name: "failed-list.txt" });
     }
 
-    void archive.finalize();
+    void archive.finalize().catch(fail);
   });
 
   return {
@@ -237,6 +266,8 @@ async function processJob(jobId: string): Promise<void> {
   }
 
   try {
+    await fsPromises.mkdir(job.outputDir, { recursive: true });
+    throwIfCancelled(job);
     updateJob(job, {
       status: "running",
       message: createProgressMessage(0, job.progress.total, "starting"),
@@ -251,6 +282,7 @@ async function processJob(jobId: string): Promise<void> {
 
     for (let urlIndex = 0; urlIndex < job.urls.length; urlIndex += 1) {
       for (const format of job.formats) {
+        throwIfCancelled(job);
         const currentItem = processed + 1;
         const requestLabel = `${urlIndex + 1}/${job.urls.length} ${format}`;
         const item = job.items[currentItem - 1];
@@ -277,6 +309,7 @@ async function processJob(jobId: string): Promise<void> {
             cookiesFilePath: job.cookiesFilePath,
             signal: job.abortController.signal,
             progress: (stage, detail, stagePercent) => {
+              if (job.abortController.signal.aborted) return;
               updateJob(job, {
                 message: createProgressMessage(currentItem, total, stage, detail),
                 progress: {
@@ -290,8 +323,9 @@ async function processJob(jobId: string): Promise<void> {
             }
           });
 
-          results.push(prepared);
           job.cleanupPaths.push(prepared.cleanup);
+          throwIfCancelled(job);
+          results.push(prepared);
           job.itemArtifacts.set(item.id, {
             filePath: prepared.filePath,
             downloadName: prepared.downloadName
@@ -313,6 +347,8 @@ async function processJob(jobId: string): Promise<void> {
             }
           });
         } catch (error) {
+          throwIfCancelled(job);
+          if (error instanceof Error && error.name === "AbortError") throw error;
           processed += 1;
           const message = error instanceof Error ? error.message : "Unknown item error";
           failedItems.push({
@@ -338,6 +374,7 @@ async function processJob(jobId: string): Promise<void> {
       }
     }
 
+    throwIfCancelled(job);
     if (results.length === 0) {
       const firstError = failedItems[0]?.message ?? "No output file was produced.";
       throw new AppError(`All ${failedItems.length} download items failed. First error: ${firstError}`, 400);
@@ -363,6 +400,7 @@ async function processJob(jobId: string): Promise<void> {
       finalArtifact = await buildZipArchive(job, results, failedItems);
     }
 
+    throwIfCancelled(job);
     job.filePath = finalArtifact.filePath;
     job.downloadName = finalArtifact.downloadName;
     updateJob(job, {
@@ -388,6 +426,14 @@ async function processJob(jobId: string): Promise<void> {
         : isAbort
           ? "Download was cancelled."
           : "Download failed.";
+    if (isAbort) {
+      for (const item of job.items) {
+        if (item.status !== "failed") item.status = "cancelled";
+        item.downloadName = undefined;
+      }
+      job.downloadName = undefined;
+      job.filePath = undefined;
+    }
     updateJob(job, {
       status: isAbort ? "cancelled" : "failed",
       message,
@@ -450,10 +496,9 @@ export function createDownloadJob(input: JobInput): DownloadJobSummary {
     abortController: new AbortController()
   };
 
-  void fsPromises.mkdir(job.outputDir, { recursive: true });
   jobs.set(id, job);
   logJob(id, `created urls=${input.urls.length} formats=${input.formats.join(",")} total=${total}`);
-  void processJob(id);
+  queueMicrotask(() => { void processJob(id); });
 
   return summarizeJob(job);
 }

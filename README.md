@@ -131,7 +131,7 @@ Behavior:
 - `GET /api/download/:jobId` returns the current job status and real progress.
 - `GET /api/download/:jobId/file` streams the finished file when the job is complete.
 - `GET /api/download/:jobId/items/:itemId/file` streams one successful item from the job.
-- `POST /api/download/:jobId/cancel` cancels an active job or cleans up a completed artifact immediately.
+- `POST /api/download/:jobId/cancel` cancels queued/running work. Cancellation is terminal, skips remaining items and removes partial artifacts after process termination; completed artifacts remain available until TTL.
 - Single URL + single format: the job produces one file.
 - Single URL + multiple formats: the job bundles outputs into one zip.
 - Multiple URLs: the job bundles outputs into one zip.
