@@ -31,11 +31,16 @@ assert files("yt_dlp_ejs.yt.solver").joinpath("lib.min.js").read_bytes()
 print("Bundled EJS solver resources are readable.")
 PYTHON
 endpoint="$("${compose[@]}" port app 3000)"
-# Allow only the local published health port and never route it through a proxy.
+# The native HEALTHCHECK validates HTTP/JSON; Compose --wait requires healthy.
+# Check that the published port is reachable from the host over loopback only.
 [[ "$endpoint" =~ ^127\.0\.0\.1:[0-9]+$ ]]
-health="$(curl --noproxy '*' --fail --silent "http://${endpoint}/api/health")" # NOSONAR: Loopback-only public health check sends no sensitive data.
-printf '%s' "$health" | python3 -c 'import json,sys; assert json.load(sys.stdin)["ok"] is True'
+python3 - "${endpoint##*:}" <<'PYTHON'
+import socket
+import sys
+with socket.create_connection(("127.0.0.1", int(sys.argv[1])), timeout=3):
+    pass
+PYTHON
 container="$("${compose[@]}" ps -q app)"
 "${compose[@]}" stop app
 [[ "$(docker inspect --format '{{.State.ExitCode}}' "$container")" = 0 ]]
-echo 'Docker smoke passed: health, dependencies, non-root, storage cap, read-only filesystem, graceful shutdown.'
+echo 'Docker smoke passed: health, published port, dependencies, non-root, storage cap, read-only filesystem, graceful shutdown.'
