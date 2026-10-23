@@ -1,5 +1,5 @@
 # Node 22 / Debian bookworm-slim; refresh this manifest digest for security fixes.
-FROM node@sha256:3ed98443660ff48413b5af19ecefce3b9d50845a901a43420d47cc63a9fddbe9 AS base
+FROM node:22.23.4-bookworm-slim@sha256:de170b39439eb0e5a3444ad7d60b015614a381e10fecae2e30ec9e735122f38d AS base
 
 # Bootstrap apt HTTPS from the pinned Node image's bundled Mozilla CA roots.
 # Frozen Debian repositories make FFmpeg/Python dependency resolution traceable.
