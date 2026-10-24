@@ -42,8 +42,13 @@ describe('download task management', () => {
     const app = page();
     app.run(`renderTaskPanel([{id:'job',status:'completed',items:[{id:'ok',format:'mp3',status:'completed',downloadName:'ok.mp3'},{id:'bad',format:'mp4',status:'failed',error:'<img onerror=alert(1)>'}]}])`);
     const panel = app.elements.get('taskList');
-    expect(JSON.stringify(panel.children)).toContain('<img onerror=alert(1)>');
-    expect(JSON.stringify(panel.children)).toContain('/api/download/job/items/ok/file');
+    function descendants(node: any): any[] {
+      return [node, ...node.children.flatMap(descendants)];
+    }
+    const nodes = descendants(panel);
+    expect(nodes.filter((node) => node.textContent === '<img onerror=alert(1)>')).toHaveLength(1);
+    expect(nodes.every((node) => node.innerHTML === '')).toBe(true);
+    expect(nodes.some((node) => node.href === '/api/download/job/items/ok/file')).toBe(true);
   });
 });
 
