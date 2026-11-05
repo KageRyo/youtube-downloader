@@ -327,6 +327,10 @@ together as needed for security fixes and YouTube compatibility, then rebuild
 and rerun the smoke check. These pins make inputs traceable; they do not promise
 bit-for-bit identical image output across architectures or build tools.
 
+The npm overrides keep Archiver 7's existing ZIP API while selecting patched
+`glob` and `minimatch` versions for CVE-2026-118773 and CVE-2026-118764.
+Remove these overrides when the upstream dependency chain adopts fixed versions.
+
 The runtime runs as the `node` user with a read-only root filesystem, dropped
 capabilities, no new privileges, 2 CPUs, 2 GiB memory and 128 PIDs. Downloads,
 uploaded cookies and tool caches use a 768 MiB `/tmp` tmpfs with mode `1777` and disappear when the container is removed. There are no host
